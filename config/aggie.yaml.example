@@ -1,0 +1,59 @@
+# AGGIE Configuration
+# Copy to ~/.config/aggie/config.yaml and customize
+
+audio:
+  # Sample rate in Hz (must be 16000 for wake word and STT)
+  sample_rate: 16000
+  # Number of audio channels (must be 1 for mono)
+  channels: 1
+  # Seconds of audio to include before wake word detection
+  pre_roll_seconds: 1.5
+  # Energy threshold for silence detection
+  silence_threshold: 500.0
+  # Seconds of silence to end recording
+  silence_duration: 1.5
+  # Maximum recording duration in seconds
+  max_recording_duration: 30.0
+
+wakeword:
+  # Wake word model name or path
+  model: "hey_jarvis"
+  # Detection threshold (0.0-1.0, higher = fewer false positives)
+  threshold: 0.5
+  # VAD threshold for noise rejection
+  vad_threshold: 0.5
+
+stt:
+  # Whisper model size: tiny, base, small, medium, large-v3
+  model_size: "small"
+  # Device: auto, cpu, cuda
+  device: "auto"
+  # Compute type: auto, int8, float16
+  compute_type: "auto"
+  # Language code
+  language: "en"
+
+llm:
+  # Claude model to use
+  model: "claude-sonnet-4-20250514"
+  # Maximum tokens in response
+  max_tokens: 300
+  # API key is read from ANTHROPIC_API_KEY environment variable
+
+tts:
+  # Piper voice model name or path
+  voice_model: "en_US-lessac-medium"
+  # Speaking rate multiplier (0.5 = slow, 2.0 = fast)
+  speaking_rate: 1.0
+  # Use CUDA for TTS (if available)
+  use_cuda: false
+
+ipc:
+  # Unix socket path (default: /run/user/{uid}/aggie.sock)
+  socket_path: null
+
+logging:
+  # Log level: DEBUG, INFO, WARNING, ERROR
+  level: "INFO"
+  # Log file path (optional, logs to stderr by default)
+  file: null

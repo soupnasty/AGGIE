@@ -1,0 +1,110 @@
+"""Command-line interface for controlling the AGGIE daemon."""
+
+import argparse
+import asyncio
+import os
+import sys
+
+from aggie.ipc.protocol import Command, CommandType, SimpleResponse, StatusResponse
+
+
+DEFAULT_SOCKET_PATH = f"/run/user/{os.getuid()}/aggie.sock"
+
+
+async def send_command(socket_path: str, command: Command) -> str:
+    """Send a command to the daemon and return the response.
+
+    Args:
+        socket_path: Path to daemon socket.
+        command: Command to send.
+
+    Returns:
+        JSON response string.
+
+    Raises:
+        SystemExit: On connection errors.
+    """
+    try:
+        reader, writer = await asyncio.open_unix_connection(socket_path)
+
+        # Send command
+        writer.write(command.to_json().encode() + b"\n")
+        await writer.drain()
+
+        # Read response
+        data = await asyncio.wait_for(reader.readline(), timeout=5.0)
+
+        writer.close()
+        await writer.wait_closed()
+
+        return data.decode().strip()
+
+    except FileNotFoundError:
+        print("Error: Daemon is not running (socket not found)", file=sys.stderr)
+        sys.exit(1)
+    except ConnectionRefusedError:
+        print("Error: Daemon refused connection", file=sys.stderr)
+        sys.exit(1)
+    except asyncio.TimeoutError:
+        print("Error: Daemon did not respond in time", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def main() -> None:
+    """Main entry point for aggie-ctl."""
+    parser = argparse.ArgumentParser(
+        prog="aggie-ctl",
+        description="Control the AGGIE voice assistant daemon",
+    )
+    parser.add_argument(
+        "--socket",
+        "-s",
+        default=DEFAULT_SOCKET_PATH,
+        help="Path to daemon socket",
+    )
+
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # Commands
+    subparsers.add_parser("mute", help="Mute the assistant (stop listening)")
+    subparsers.add_parser("unmute", help="Unmute the assistant (resume listening)")
+    subparsers.add_parser("cancel", help="Cancel current operation")
+    subparsers.add_parser("status", help="Get daemon status")
+    subparsers.add_parser("shutdown", help="Shutdown the daemon")
+
+    args = parser.parse_args()
+
+    # Map command names to types
+    command_map = {
+        "mute": CommandType.MUTE,
+        "unmute": CommandType.UNMUTE,
+        "cancel": CommandType.CANCEL,
+        "status": CommandType.STATUS,
+        "shutdown": CommandType.SHUTDOWN,
+    }
+
+    command = Command(type=command_map[args.command])
+    response_json = asyncio.run(send_command(args.socket, command))
+
+    # Parse and display response
+    if args.command == "status":
+        response = StatusResponse.from_json(response_json)
+        print(f"State:  {response.state}")
+        print(f"Muted:  {response.muted}")
+        print(f"Uptime: {response.uptime_seconds:.1f}s")
+        if response.error:
+            print(f"Error:  {response.error}")
+    else:
+        response = SimpleResponse.from_json(response_json)
+        if response.status.value == "ok":
+            print(response.message)
+        else:
+            print(f"Error: {response.error}", file=sys.stderr)
+            sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
