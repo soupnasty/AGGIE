@@ -1,0 +1,24 @@
+[Unit]
+Description=AGGIE Voice Assistant Daemon
+Documentation=https://github.com/user/aggie
+After=pulseaudio.service pipewire.service sound.target
+Wants=pulseaudio.service
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/aggie
+Restart=on-failure
+RestartSec=5
+
+# Environment
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-%h/.config/aggie/env
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.cache %t
+
+[Install]
+WantedBy=default.target
