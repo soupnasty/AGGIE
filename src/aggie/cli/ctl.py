@@ -5,7 +5,13 @@ import asyncio
 import os
 import sys
 
-from aggie.ipc.protocol import Command, CommandType, SimpleResponse, StatusResponse
+from aggie.ipc.protocol import (
+    Command,
+    CommandType,
+    DebugDumpResponse,
+    SimpleResponse,
+    StatusResponse,
+)
 
 
 DEFAULT_SOCKET_PATH = f"/run/user/{os.getuid()}/aggie.sock"
@@ -74,6 +80,12 @@ def main() -> None:
     subparsers.add_parser("cancel", help="Cancel current operation")
     subparsers.add_parser("status", help="Get daemon status")
     subparsers.add_parser("shutdown", help="Shutdown the daemon")
+    debug_parser = subparsers.add_parser("debug-dump", help="Dump debug logs for troubleshooting")
+    debug_parser.add_argument(
+        "--raw",
+        action="store_true",
+        help="Output raw JSON lines (for piping to tools)",
+    )
 
     args = parser.parse_args()
 
@@ -84,6 +96,7 @@ def main() -> None:
         "cancel": CommandType.CANCEL,
         "status": CommandType.STATUS,
         "shutdown": CommandType.SHUTDOWN,
+        "debug-dump": CommandType.DEBUG_DUMP,
     }
 
     command = Command(type=command_map[args.command])
@@ -97,6 +110,20 @@ def main() -> None:
         print(f"Uptime: {response.uptime_seconds:.1f}s")
         if response.error:
             print(f"Error:  {response.error}")
+    elif args.command == "debug-dump":
+        response = DebugDumpResponse.from_json(response_json)
+        if response.status.value == "ok":
+            if args.raw:
+                # Raw output for piping to jq/grep
+                print(response.content, end="")
+            else:
+                print(f"# Debug log: {response.log_path} ({response.lines} lines)")
+                print(f"# Tip: Use --raw | jq for JSON parsing")
+                print()
+                print(response.content, end="")
+        else:
+            print(f"Error: {response.error}", file=sys.stderr)
+            sys.exit(1)
     else:
         response = SimpleResponse.from_json(response_json)
         if response.status.value == "ok":

@@ -78,7 +78,9 @@ class LoggingConfig:
     """Logging configuration."""
 
     level: str = "INFO"
-    file: Optional[str] = None
+    file: Optional[str] = None  # Deprecated: use debug_to_file instead
+    debug_to_file: bool = True  # Write JSON debug logs to ~/.local/share/aggie/logs/
+    use_colors: bool = True  # ANSI colors in console output
 
 
 @dataclass
