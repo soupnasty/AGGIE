@@ -25,6 +25,11 @@ def main() -> None:
         action="store_true",
         help="Enable debug logging",
     )
+    parser.add_argument(
+        "--cues",
+        action="store_true",
+        help="Enable audio feedback cues (chimes for wake word, done listening)",
+    )
 
     args = parser.parse_args()
 
@@ -33,6 +38,9 @@ def main() -> None:
 
     if args.debug:
         config.logging.level = "DEBUG"
+
+    if args.cues:
+        config.audio.cues_enabled = True
 
     setup_logging(
         config,

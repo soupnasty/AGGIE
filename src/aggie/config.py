@@ -18,6 +18,8 @@ class AudioConfig:
     silence_threshold: float = 500.0
     silence_duration: float = 1.5
     max_recording_duration: float = 30.0
+    # Audio feedback cues (chimes for wake word, done listening, etc.)
+    cues_enabled: bool = False
 
 
 @dataclass

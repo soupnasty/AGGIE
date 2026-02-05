@@ -10,6 +10,7 @@ import numpy as np
 
 from .audio.buffer import AudioRingBuffer
 from .audio.capture import AudioCapture
+from .audio.cues import AudioCues, CueType
 from .audio.playback import AudioPlayback
 from .config import Config
 from .context import SessionContext
@@ -75,6 +76,12 @@ class AggieDaemon:
         self._stt: Optional[SpeechToText] = None
         self._llm: Optional[ClaudeClient] = None
         self._tts: Optional[TextToSpeech] = None
+
+        # Audio cues (optional)
+        self._audio_cues: Optional[AudioCues] = None
+        if config.audio.cues_enabled:
+            self._audio_cues = AudioCues()
+            logger.info("Audio cues enabled")
 
         # Session context for multi-turn conversations
         self._session = SessionContext(
@@ -229,6 +236,8 @@ class AggieDaemon:
 
     async def _process_recording(self) -> None:
         """Process recorded audio: STT -> LLM -> TTS."""
+        # Play "done listening" cue before processing
+        await self._play_cue(CueType.DONE_LISTENING)
         await self._state_machine.transition(State.THINKING)
 
         try:
@@ -304,6 +313,22 @@ class AggieDaemon:
         except Exception as e:
             logger.error(f"Failed to speak error message: {e}")
 
+    async def _play_cue(self, cue_type: CueType) -> None:
+        """Play an audio feedback cue if enabled.
+
+        Args:
+            cue_type: Type of cue to play.
+        """
+        if self._audio_cues is None:
+            return
+
+        try:
+            audio_data, sample_rate = self._audio_cues.get_cue(cue_type)
+            if len(audio_data) > 0:
+                await self._audio_playback.play(audio_data, sample_rate)
+        except Exception as e:
+            logger.warning(f"Failed to play audio cue: {e}")
+
     async def run(self) -> None:
         """Main daemon loop."""
         logger.info("Starting AGGIE daemon")
@@ -367,6 +392,7 @@ class AggieDaemon:
 
                         if detected:
                             logger.info("Wake word detected! Starting to listen...")
+                            await self._play_cue(CueType.WAKE)
                             self._recording_buffer = [self._audio_buffer.get_all()]
                             self._silence_frames = 0
                             self._recording_frames = 0

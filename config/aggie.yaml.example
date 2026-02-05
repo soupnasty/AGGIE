@@ -14,6 +14,8 @@ audio:
   silence_duration: 1.5
   # Maximum recording duration in seconds
   max_recording_duration: 30.0
+  # Enable audio feedback cues (chimes for wake word detection, done listening)
+  cues_enabled: false
 
 wakeword:
   # Wake word model name or path
