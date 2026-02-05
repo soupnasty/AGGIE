@@ -45,7 +45,7 @@ class StateMachine:
         State.IDLE: {State.LISTENING, State.MUTED},
         State.LISTENING: {State.THINKING, State.IDLE, State.MUTED},
         State.THINKING: {State.SPEAKING, State.IDLE, State.MUTED},
-        State.SPEAKING: {State.IDLE, State.MUTED},
+        State.SPEAKING: {State.IDLE, State.LISTENING, State.MUTED},  # LISTENING for interrupt
         State.MUTED: {State.IDLE},
     }
 

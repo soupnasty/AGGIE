@@ -104,6 +104,9 @@ class AggieDaemon:
         self._pending_frames: list[np.ndarray] = []
         self._frame_count = 0
 
+        # Background playback task for interrupt support
+        self._playback_task: Optional[asyncio.Task] = None
+
     def _on_state_change(self, old_state: State, new_state: State, context) -> None:
         """Sync state changes to the logging module for context injection."""
         set_current_state(new_state)
@@ -288,19 +291,41 @@ class AggieDaemon:
             # Add assistant turn to session
             self._session.add_turn("assistant", response_text)
 
-            # Synthesize and play
+            # Synthesize and play (non-blocking for interrupt support)
             await self._state_machine.transition(State.SPEAKING)
             tts = self._ensure_tts()
             audio_data, sample_rate = tts.synthesize(response_text)
 
             if len(audio_data) > 0:
-                await self._audio_playback.play(audio_data, sample_rate)
+                # Start playback as background task so main loop can detect interrupts
+                self._playback_task = asyncio.create_task(
+                    self._play_with_completion(audio_data, sample_rate)
+                )
+            else:
+                await self._state_machine.force_transition(State.IDLE)
 
         except Exception as e:
             logger.error(f"Error processing recording: {e}", exc_info=True)
-
-        finally:
             await self._state_machine.force_transition(State.IDLE)
+
+    async def _play_with_completion(self, audio_data: np.ndarray, sample_rate: int) -> None:
+        """Play audio and transition to IDLE when done (unless interrupted).
+
+        Args:
+            audio_data: Audio samples to play.
+            sample_rate: Sample rate of the audio.
+        """
+        try:
+            completed = await self._audio_playback.play(audio_data, sample_rate)
+            # Only transition to IDLE if still in SPEAKING state (not interrupted)
+            if self._state_machine.state == State.SPEAKING:
+                await self._state_machine.force_transition(State.IDLE)
+            elif not completed:
+                logger.debug("Playback was interrupted, not transitioning to IDLE")
+        except Exception as e:
+            logger.error(f"Error during playback: {e}")
+            if self._state_machine.state == State.SPEAKING:
+                await self._state_machine.force_transition(State.IDLE)
 
     async def _speak_error(self, message: str) -> None:
         """Speak an error message to the user."""
@@ -309,9 +334,15 @@ class AggieDaemon:
             tts = self._ensure_tts()
             audio_data, sample_rate = tts.synthesize(message)
             if len(audio_data) > 0:
-                await self._audio_playback.play(audio_data, sample_rate)
+                # Use background task for interrupt support
+                self._playback_task = asyncio.create_task(
+                    self._play_with_completion(audio_data, sample_rate)
+                )
+            else:
+                await self._state_machine.force_transition(State.IDLE)
         except Exception as e:
             logger.error(f"Failed to speak error message: {e}")
+            await self._state_machine.force_transition(State.IDLE)
 
     async def _play_cue(self, cue_type: CueType) -> None:
         """Play an audio feedback cue if enabled.
@@ -425,6 +456,21 @@ class AggieDaemon:
                     elif recording_duration >= self._config.audio.max_recording_duration:
                         logger.info(f"Max recording duration reached ({recording_duration:.1f}s)")
                         await self._process_recording()
+
+                elif state == State.SPEAKING:
+                    # Listen for wake word interrupt during playback
+                    for frame in frames_to_process:
+                        detected, confidence = self._wakeword.process_frame(frame)
+
+                        if detected:
+                            logger.info("Wake word detected during playback - interrupting!")
+                            self._audio_playback.cancel()
+                            await self._play_cue(CueType.WAKE)
+                            self._recording_buffer = [self._audio_buffer.get_all()]
+                            self._silence_frames = 0
+                            self._recording_frames = 0
+                            await self._state_machine.transition(State.LISTENING)
+                            break
 
                 # Small sleep to yield control
                 await asyncio.sleep(0.01)
