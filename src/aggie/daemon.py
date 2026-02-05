@@ -26,6 +26,7 @@ from .ipc.protocol import (
 )
 from .ipc.server import IPCServer
 from .llm.claude import APIError, ClaudeClient
+from .llm.sentence_buffer import sentences_from_stream
 from .state import State, StateMachine
 from .stt.whisper import SpeechToText, detect_gpu
 from .tts.piper import TextToSpeech
@@ -238,7 +239,7 @@ class AggieDaemon:
         )
 
     async def _process_recording(self) -> None:
-        """Process recorded audio: STT -> LLM -> TTS."""
+        """Process recorded audio: STT -> streaming LLM -> streaming TTS."""
         # Play "done listening" cue before processing
         await self._play_cue(CueType.DONE_LISTENING)
         await self._state_machine.transition(State.THINKING)
@@ -254,7 +255,7 @@ class AggieDaemon:
             self._recording_buffer = []
             self._recording_frames = 0
 
-            # Transcribe
+            # Transcribe (batch - not streamable)
             stt = self._ensure_stt()
             transcript = stt.transcribe(audio, self._config.audio.sample_rate)
 
@@ -271,42 +272,96 @@ class AggieDaemon:
             # Add user turn to session
             self._session.add_turn("user", transcript)
 
-            # Get LLM response with full conversation context
+            # Get LLM and TTS ready
             llm = self._ensure_llm()
+            tts = self._ensure_tts()
             messages = self._session.build_messages()
 
+            # Stream response: LLM -> sentences -> TTS -> playback
             try:
-                response_text = await llm.get_response(messages)
+                await self._stream_response(llm, tts, messages)
             except APIError as e:
                 logger.error(f"Claude API failed: {e}")
-                # Speak error message to user
                 await self._speak_error("Sorry, I'm running into issues with Claude.")
                 return
-
-            if not response_text.strip():
-                logger.warning("Empty LLM response")
-                await self._state_machine.transition(State.IDLE)
-                return
-
-            # Add assistant turn to session
-            self._session.add_turn("assistant", response_text)
-
-            # Synthesize and play (non-blocking for interrupt support)
-            await self._state_machine.transition(State.SPEAKING)
-            tts = self._ensure_tts()
-            audio_data, sample_rate = tts.synthesize(response_text)
-
-            if len(audio_data) > 0:
-                # Start playback as background task so main loop can detect interrupts
-                self._playback_task = asyncio.create_task(
-                    self._play_with_completion(audio_data, sample_rate)
-                )
-            else:
-                await self._state_machine.force_transition(State.IDLE)
 
         except Exception as e:
             logger.error(f"Error processing recording: {e}", exc_info=True)
             await self._state_machine.force_transition(State.IDLE)
+
+    async def _stream_response(
+        self,
+        llm: ClaudeClient,
+        tts: "TextToSpeech",
+        messages: list[dict],
+    ) -> None:
+        """Stream LLM response through TTS and playback.
+
+        This creates a pipeline: Claude tokens -> sentences -> TTS -> playback
+        Each stage runs concurrently for minimum latency.
+
+        Args:
+            llm: Claude client.
+            tts: TTS engine.
+            messages: Conversation messages to send to Claude.
+        """
+        # Accumulate full response for session context
+        full_response: list[str] = []
+
+        async def sentence_generator():
+            """Generate sentences from Claude stream, accumulating full response."""
+            token_stream = llm.stream_response(messages)
+            async for sentence in sentences_from_stream(token_stream):
+                full_response.append(sentence)
+                yield sentence
+
+        # Transition to SPEAKING on first sentence
+        first_sentence = True
+
+        async def audio_generator():
+            """Generate audio chunks, transitioning to SPEAKING on first chunk."""
+            nonlocal first_sentence
+            async for audio_data, sample_rate in tts.synthesize_stream(sentence_generator()):
+                if first_sentence:
+                    await self._state_machine.transition(State.SPEAKING)
+                    first_sentence = False
+                yield audio_data, sample_rate
+
+        # Start streaming playback as background task for interrupt support
+        self._playback_task = asyncio.create_task(
+            self._streaming_playback_with_completion(audio_generator())
+        )
+
+        # Wait for playback to complete (or be interrupted)
+        await self._playback_task
+
+        # Save full response to session context
+        response_text = " ".join(full_response)
+        if response_text.strip():
+            self._session.add_turn("assistant", response_text)
+            logger.info(f"Claude response ({len(full_response)} sentences): '{response_text[:80]}...'")
+        else:
+            logger.warning("Empty LLM response")
+
+    async def _streaming_playback_with_completion(
+        self,
+        audio_stream,
+    ) -> None:
+        """Play streaming audio and transition to IDLE when done.
+
+        Args:
+            audio_stream: Async iterator of (audio_data, sample_rate) tuples.
+        """
+        try:
+            completed = await self._audio_playback.play_stream(audio_stream)
+            if self._state_machine.state == State.SPEAKING:
+                await self._state_machine.force_transition(State.IDLE)
+            elif not completed:
+                logger.debug("Streaming playback was interrupted")
+        except Exception as e:
+            logger.error(f"Error during streaming playback: {e}")
+            if self._state_machine.state == State.SPEAKING:
+                await self._state_machine.force_transition(State.IDLE)
 
     async def _play_with_completion(self, audio_data: np.ndarray, sample_rate: int) -> None:
         """Play audio and transition to IDLE when done (unless interrupted).

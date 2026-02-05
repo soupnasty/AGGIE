@@ -4,7 +4,7 @@ import logging
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import AsyncIterator, Optional, Tuple
 
 import numpy as np
 import soundfile as sf
@@ -202,3 +202,42 @@ class TextToSpeech:
         finally:
             # Clean up temp file
             Path(output_path).unlink(missing_ok=True)
+
+    async def synthesize_stream(
+        self,
+        sentence_stream: AsyncIterator[str],
+    ) -> AsyncIterator[Tuple[np.ndarray, int]]:
+        """Synthesize sentences from a stream, yielding audio chunks.
+
+        Processes sentences as they arrive, yielding audio for each
+        sentence to enable streaming playback.
+
+        Args:
+            sentence_stream: Async iterator yielding sentences.
+
+        Yields:
+            Tuples of (audio_data as int16 numpy array, sample_rate).
+        """
+        import asyncio
+
+        sentence_count = 0
+        async for sentence in sentence_stream:
+            if not sentence.strip():
+                continue
+
+            sentence_count += 1
+            logger.debug(f"Synthesizing sentence {sentence_count}: '{sentence[:40]}...'")
+
+            # Run TTS in executor to avoid blocking event loop
+            loop = asyncio.get_running_loop()
+            try:
+                audio_data, sample_rate = await loop.run_in_executor(
+                    None, self.synthesize, sentence
+                )
+                if len(audio_data) > 0:
+                    yield audio_data, sample_rate
+            except Exception as e:
+                logger.error(f"Failed to synthesize sentence: {e}")
+                # Continue with next sentence rather than failing entirely
+
+        logger.info(f"Streaming TTS complete: {sentence_count} sentences")

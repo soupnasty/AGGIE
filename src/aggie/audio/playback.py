@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from typing import Optional
+from typing import AsyncIterator, Optional
 
 import numpy as np
 import sounddevice as sd
@@ -121,3 +121,54 @@ class AudioPlayback:
         if self._playing:
             logger.info("Cancelling playback")
             self._cancel_event.set()
+
+    async def play_stream(
+        self,
+        audio_stream: AsyncIterator[tuple[np.ndarray, int]],
+    ) -> bool:
+        """Play audio from an async stream of chunks.
+
+        Plays chunks back-to-back as they arrive, starting playback
+        as soon as the first chunk is available for minimal latency.
+
+        Args:
+            audio_stream: Async iterator yielding (audio_data, sample_rate) tuples.
+
+        Returns:
+            True if all chunks played, False if cancelled.
+        """
+        self._cancel_event.clear()
+        self._playing = True
+        cancelled = False
+        chunks_played = 0
+
+        try:
+            async for audio_data, sample_rate in audio_stream:
+                if self._cancel_event.is_set():
+                    cancelled = True
+                    break
+
+                if len(audio_data) == 0:
+                    continue
+
+                # Play this chunk (blocking until done)
+                chunk_completed = await self.play(audio_data, sample_rate)
+                if not chunk_completed:
+                    cancelled = True
+                    break
+
+                chunks_played += 1
+
+        except Exception as e:
+            logger.error(f"Error in streaming playback: {e}")
+            cancelled = True
+
+        finally:
+            self._playing = False
+
+        if cancelled:
+            logger.info(f"Streaming playback cancelled after {chunks_played} chunks")
+        else:
+            logger.debug(f"Streaming playback completed: {chunks_played} chunks")
+
+        return not cancelled

@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import os
-from typing import Optional, Union
+from typing import AsyncIterator, Optional, Union
 
 import httpx
 
@@ -169,3 +169,67 @@ Respond naturally as if speaking to someone."""
             f"Claude API failed after {self._max_retries + 1} attempts: {last_error}",
             retryable=True
         )
+
+    async def stream_response(
+        self, input_data: Union[str, list[dict]]
+    ) -> AsyncIterator[str]:
+        """Stream a response from Claude, yielding text chunks.
+
+        Args:
+            input_data: Either a single transcript string or a list
+                       of message dicts with 'role' and 'content' keys.
+
+        Yields:
+            Text chunks as they arrive from the API.
+
+        Raises:
+            APIError: On API errors (no retry for streaming).
+        """
+        from anthropic import APIConnectionError, APIStatusError, APITimeoutError
+
+        # Handle both string (legacy) and messages list
+        if isinstance(input_data, str):
+            if not input_data.strip():
+                return
+            messages = [{"role": "user", "content": input_data}]
+            log_preview = input_data[:80]
+        else:
+            if not input_data:
+                return
+            messages = input_data
+            last_user = next(
+                (m["content"] for m in reversed(messages) if m["role"] == "user"),
+                "",
+            )
+            log_preview = last_user[:80]
+
+        logger.info(
+            f"Streaming from Claude ({len(messages)} messages): "
+            f"'{log_preview}{'...' if len(log_preview) >= 80 else ''}'"
+        )
+
+        try:
+            async with self._client.messages.stream(
+                model=self._model,
+                max_tokens=self._max_tokens,
+                system=self.SYSTEM_PROMPT,
+                messages=messages,
+            ) as stream:
+                async for text in stream.text_stream:
+                    yield text
+
+        except APITimeoutError as e:
+            logger.error(f"Claude API timeout during streaming: {e}")
+            raise APIError("Claude API timeout during streaming", retryable=True) from e
+
+        except APIConnectionError as e:
+            logger.error(f"Claude API connection error during streaming: {e}")
+            raise APIError(f"Claude API connection error: {e}", retryable=True) from e
+
+        except APIStatusError as e:
+            logger.error(f"Claude API error {e.status_code} during streaming: {e.message}")
+            raise APIError(f"Claude API error: {e.message}", retryable=False) from e
+
+        except Exception as e:
+            logger.error(f"Unexpected error streaming from Claude: {e}", exc_info=True)
+            raise APIError(f"Unexpected error: {e}", retryable=False) from e
