@@ -45,6 +45,8 @@ class LLMConfig:
 
     model: str = "claude-sonnet-4-20250514"
     max_tokens: int = 300
+    timeout: float = 30.0  # Request timeout in seconds
+    max_retries: int = 3  # Max retries for transient errors
 
 
 @dataclass

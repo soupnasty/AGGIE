@@ -24,7 +24,7 @@ from .ipc.protocol import (
     StatusResponse,
 )
 from .ipc.server import IPCServer
-from .llm.claude import ClaudeClient
+from .llm.claude import APIError, ClaudeClient
 from .state import State, StateMachine
 from .stt.whisper import SpeechToText, detect_gpu
 from .tts.piper import TextToSpeech
@@ -138,6 +138,8 @@ class AggieDaemon:
             self._llm = ClaudeClient(
                 model=self._config.llm.model,
                 max_tokens=self._config.llm.max_tokens,
+                timeout=self._config.llm.timeout,
+                max_retries=self._config.llm.max_retries,
             )
         return self._llm
 
@@ -260,7 +262,14 @@ class AggieDaemon:
             # Get LLM response with full conversation context
             llm = self._ensure_llm()
             messages = self._session.build_messages()
-            response_text = await llm.get_response(messages)
+
+            try:
+                response_text = await llm.get_response(messages)
+            except APIError as e:
+                logger.error(f"Claude API failed: {e}")
+                # Speak error message to user
+                await self._speak_error("Sorry, I'm running into issues with Claude.")
+                return
 
             if not response_text.strip():
                 logger.warning("Empty LLM response")
@@ -283,6 +292,17 @@ class AggieDaemon:
 
         finally:
             await self._state_machine.force_transition(State.IDLE)
+
+    async def _speak_error(self, message: str) -> None:
+        """Speak an error message to the user."""
+        try:
+            await self._state_machine.transition(State.SPEAKING)
+            tts = self._ensure_tts()
+            audio_data, sample_rate = tts.synthesize(message)
+            if len(audio_data) > 0:
+                await self._audio_playback.play(audio_data, sample_rate)
+        except Exception as e:
+            logger.error(f"Failed to speak error message: {e}")
 
     async def run(self) -> None:
         """Main daemon loop."""

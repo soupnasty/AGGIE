@@ -38,6 +38,10 @@ llm:
   model: "claude-sonnet-4-20250514"
   # Maximum tokens in response
   max_tokens: 300
+  # Request timeout in seconds
+  timeout: 30.0
+  # Max retries for transient errors (timeouts, rate limits, 5xx)
+  max_retries: 3
   # API key is read from ANTHROPIC_API_KEY environment variable
 
 tts:
