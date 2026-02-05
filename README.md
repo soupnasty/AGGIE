@@ -9,31 +9,10 @@ It sits idle most of the time, listens for the wake word, captures a single utte
 
 ## Quick Start
 
-### Option 1: Docker (Recommended)
-
-```bash
-# Set your API key
-cp .env.example .env
-# Edit .env and add your ANTHROPIC_API_KEY
-
-# Build and run
-docker compose up --build
-
-# Control (in another terminal)
-docker compose exec aggie aggie-ctl status
-docker compose exec aggie aggie-ctl mute
-docker compose exec aggie aggie-ctl cancel
-
-# Stop
-docker compose down
-```
-
-### Option 2: Native Installation
-
-**Prerequisites:**
+**System dependencies:**
 ```bash
 # Ubuntu/Debian
-sudo apt install python3-dev python3-venv portaudio19-dev libsndfile1
+sudo apt install python3-dev portaudio19-dev libsndfile1
 
 # Fedora
 sudo dnf install python3-devel portaudio-devel libsndfile
@@ -44,12 +23,11 @@ sudo pacman -S python portaudio libsndfile
 
 **Install and run:**
 ```bash
-# Create virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
+# Install uv (fast Python package manager)
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Install AGGIE
-pip install -e .
+# Install AGGIE and all dependencies
+uv sync
 
 # Set up configuration
 mkdir -p ~/.config/aggie
@@ -59,7 +37,7 @@ cp config/aggie.yaml.example ~/.config/aggie/config.yaml
 export ANTHROPIC_API_KEY='your-key-here'
 
 # Run
-aggie --debug
+uv run aggie --debug
 ```
 
 ### systemd Service (Native only)
@@ -74,11 +52,11 @@ systemctl --user enable aggie  # start on login
 ### Control Commands
 
 ```bash
-aggie-ctl status    # Show current state
-aggie-ctl mute      # Stop listening
-aggie-ctl unmute    # Resume listening
-aggie-ctl cancel    # Cancel current operation
-aggie-ctl shutdown  # Stop the daemon
+uv run aggie-ctl status    # Show current state
+uv run aggie-ctl mute      # Stop listening
+uv run aggie-ctl unmute    # Resume listening
+uv run aggie-ctl cancel    # Cancel current operation
+uv run aggie-ctl shutdown  # Stop the daemon
 ```
 
 ## Architecture

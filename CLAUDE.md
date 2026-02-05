@@ -74,13 +74,31 @@ Key packages and why they're used:
 Config loaded from `~/.config/aggie/config.yaml` (XDG compliant).
 Defaults are sensible - most users only need to set `ANTHROPIC_API_KEY`.
 
+## Development Setup
+
+This project uses [uv](https://github.com/astral-sh/uv) for fast dependency management.
+
+```bash
+# Install uv (if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Install all dependencies including dev tools
+uv sync --all-extras
+
+# Run the daemon
+uv run aggie --debug
+
+# Run CLI commands
+uv run aggie-ctl status
+```
+
 ## Testing
 
 ```bash
-pytest                      # Run all tests
-pytest -xvs tests/test_X.py # Run specific test with output
-aggie --debug               # Run daemon with debug logging
-aggie-ctl status            # Check daemon state
+uv run pytest                      # Run all tests
+uv run pytest -xvs tests/test_X.py # Run specific test with output
+uv run aggie --debug               # Run daemon with debug logging
+uv run aggie-ctl status            # Check daemon state
 ```
 
 ## Debugging (IMPORTANT)

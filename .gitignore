@@ -75,5 +75,3 @@ logs/
 .DS_Store
 Thumbs.db
 
-# Project specific
-/docker/data/
