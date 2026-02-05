@@ -18,6 +18,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+gpu = [
+    "torch>=2.0.0",  # For detailed GPU info; ctranslate2 handles CUDA acceleration
+]
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21.0",

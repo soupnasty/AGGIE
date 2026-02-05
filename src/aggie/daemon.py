@@ -24,7 +24,7 @@ from .ipc.protocol import (
 from .ipc.server import IPCServer
 from .llm.claude import ClaudeClient
 from .state import State, StateMachine
-from .stt.whisper import SpeechToText
+from .stt.whisper import SpeechToText, detect_gpu
 from .tts.piper import TextToSpeech
 from .logging import set_current_state, get_debug_log_contents, get_debug_log_path
 
@@ -151,11 +151,13 @@ class AggieDaemon:
             Response object.
         """
         if command.type == CommandType.STATUS:
+            _, gpu_info = detect_gpu()
             return StatusResponse(
                 status=ResponseStatus.OK,
                 state=self._state_machine.state.name,
                 muted=self._muted,
                 uptime_seconds=time.time() - self._start_time,
+                gpu=gpu_info,
             )
 
         elif command.type == CommandType.MUTE:

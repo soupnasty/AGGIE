@@ -108,6 +108,7 @@ def main() -> None:
         print(f"State:  {response.state}")
         print(f"Muted:  {response.muted}")
         print(f"Uptime: {response.uptime_seconds:.1f}s")
+        print(f"GPU:    {response.gpu or 'None (CPU mode)'}")
         if response.error:
             print(f"Error:  {response.error}")
     elif args.command == "debug-dump":

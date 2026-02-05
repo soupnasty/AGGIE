@@ -49,6 +49,7 @@ class StatusResponse:
     state: str
     muted: bool
     uptime_seconds: float
+    gpu: Optional[str] = None  # GPU info if available (e.g., "GTX 1060 (6.0GB)")
     error: Optional[str] = None
 
     def to_json(self) -> str:

@@ -1,11 +1,47 @@
 """Speech-to-text using faster-whisper."""
 
 import logging
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+def detect_gpu() -> Tuple[str, Optional[str]]:
+    """Detect best available device and return device info.
+
+    Uses ctranslate2 (faster-whisper's backend) for detection, with torch fallback
+    for detailed GPU info.
+
+    Returns:
+        Tuple of (device, gpu_info) where device is 'cuda' or 'cpu',
+        and gpu_info is a description string or None.
+    """
+    # Check if ctranslate2 supports CUDA (faster-whisper's backend)
+    try:
+        import ctranslate2
+
+        cuda_available = "cuda" in ctranslate2.get_supported_compute_types("cuda")
+    except (ImportError, RuntimeError):
+        cuda_available = False
+
+    if not cuda_available:
+        return "cpu", None
+
+    # Try to get detailed GPU info via torch (optional)
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            gpu_name = torch.cuda.get_device_name(0)
+            gpu_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            return "cuda", f"{gpu_name} ({gpu_memory:.1f}GB)"
+    except ImportError:
+        pass
+
+    # CUDA available but no torch for details
+    return "cuda", "CUDA (install torch for GPU details)"
 
 
 class SpeechToText:
@@ -43,29 +79,39 @@ class SpeechToText:
 
         from faster_whisper import WhisperModel
 
-        logger.info(f"Loading Whisper model: {self._model_size}")
-
         # Determine device
         device = self._device
+        gpu_info = None
         if device == "auto":
-            try:
-                import torch
-
-                device = "cuda" if torch.cuda.is_available() else "cpu"
-            except ImportError:
-                device = "cpu"
+            device, gpu_info = detect_gpu()
 
         # Determine compute type
         compute_type = self._compute_type
         if compute_type == "auto":
             compute_type = "float16" if device == "cuda" else "int8"
 
+        # Log device selection with context
+        if device == "cuda" and gpu_info:
+            logger.info(
+                f"Loading Whisper model: {self._model_size} on GPU",
+                extra={"ctx": {"device": device, "gpu": gpu_info, "compute_type": compute_type}}
+            )
+        else:
+            logger.info(
+                f"Loading Whisper model: {self._model_size} on CPU",
+                extra={"ctx": {"device": device, "compute_type": compute_type}}
+            )
+
         self._model = WhisperModel(
             self._model_size,
             device=device,
             compute_type=compute_type,
         )
-        logger.info(f"Whisper model loaded on {device} with {compute_type}")
+
+        if device == "cuda":
+            logger.info(f"Whisper ready: GPU acceleration enabled ({gpu_info})")
+        else:
+            logger.info("Whisper ready: CPU mode (set device: cuda in config to force GPU)")
 
     def transcribe(self, audio: np.ndarray, sample_rate: int = 16000) -> str:
         """Transcribe audio to text.
