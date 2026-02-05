@@ -8,6 +8,7 @@ import sys
 from aggie.ipc.protocol import (
     Command,
     CommandType,
+    ContextStatusResponse,
     DebugDumpResponse,
     SimpleResponse,
     StatusResponse,
@@ -86,20 +87,33 @@ def main() -> None:
         action="store_true",
         help="Output raw JSON lines (for piping to tools)",
     )
+    context_parser = subparsers.add_parser("context", help="Show or manage session context")
+    context_parser.add_argument(
+        "--clear",
+        action="store_true",
+        help="Clear the session context",
+    )
 
     args = parser.parse_args()
 
-    # Map command names to types
-    command_map = {
-        "mute": CommandType.MUTE,
-        "unmute": CommandType.UNMUTE,
-        "cancel": CommandType.CANCEL,
-        "status": CommandType.STATUS,
-        "shutdown": CommandType.SHUTDOWN,
-        "debug-dump": CommandType.DEBUG_DUMP,
-    }
+    # Determine command type
+    if args.command == "context":
+        if args.clear:
+            cmd_type = CommandType.CONTEXT_CLEAR
+        else:
+            cmd_type = CommandType.CONTEXT_STATUS
+    else:
+        command_map = {
+            "mute": CommandType.MUTE,
+            "unmute": CommandType.UNMUTE,
+            "cancel": CommandType.CANCEL,
+            "status": CommandType.STATUS,
+            "shutdown": CommandType.SHUTDOWN,
+            "debug-dump": CommandType.DEBUG_DUMP,
+        }
+        cmd_type = command_map[args.command]
 
-    command = Command(type=command_map[args.command])
+    command = Command(type=cmd_type)
     response_json = asyncio.run(send_command(args.socket, command))
 
     # Parse and display response
@@ -122,6 +136,16 @@ def main() -> None:
                 print(f"# Tip: Use --raw | jq for JSON parsing")
                 print()
                 print(response.content, end="")
+        else:
+            print(f"Error: {response.error}", file=sys.stderr)
+            sys.exit(1)
+    elif args.command == "context" and not args.clear:
+        response = ContextStatusResponse.from_json(response_json)
+        if response.status.value == "ok":
+            print(f"Turns:    {response.turn_count}")
+            print(f"Tokens:   ~{response.token_estimate}")
+            print(f"Silence:  {response.silence_seconds:.1f}s")
+            print(f"Summary:  {'Yes' if response.has_summary else 'No'}")
         else:
             print(f"Error: {response.error}", file=sys.stderr)
             sys.exit(1)

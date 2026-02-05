@@ -2,7 +2,7 @@
 
 import logging
 import os
-from typing import Optional
+from typing import Optional, Union
 
 logger = logging.getLogger(__name__)
 
@@ -50,11 +50,14 @@ Respond naturally as if speaking to someone."""
         self._model = model
         self._max_tokens = max_tokens
 
-    async def get_response(self, transcript: str) -> str:
-        """Get a response from Claude for the given transcript.
+    async def get_response(
+        self, input_data: Union[str, list[dict]]
+    ) -> str:
+        """Get a response from Claude.
 
         Args:
-            transcript: User's spoken text.
+            input_data: Either a single transcript string (legacy) or a list
+                       of message dicts with 'role' and 'content' keys.
 
         Returns:
             Claude's response text.
@@ -62,21 +65,33 @@ Respond naturally as if speaking to someone."""
         Raises:
             anthropic.APIError: On API errors.
         """
-        if not transcript.strip():
-            return ""
+        # Handle both string (legacy) and messages list
+        if isinstance(input_data, str):
+            if not input_data.strip():
+                return ""
+            messages = [{"role": "user", "content": input_data}]
+            log_preview = input_data[:80]
+        else:
+            if not input_data:
+                return ""
+            messages = input_data
+            # Preview the last user message for logging
+            last_user = next(
+                (m["content"] for m in reversed(messages) if m["role"] == "user"),
+                "",
+            )
+            log_preview = last_user[:80]
 
-        logger.info(f"Sending to Claude: '{transcript[:80]}{'...' if len(transcript) > 80 else ''}'")
+        logger.info(
+            f"Sending to Claude ({len(messages)} messages): "
+            f"'{log_preview}{'...' if len(log_preview) >= 80 else ''}'"
+        )
 
         message = await self._client.messages.create(
             model=self._model,
             max_tokens=self._max_tokens,
             system=self.SYSTEM_PROMPT,
-            messages=[
-                {
-                    "role": "user",
-                    "content": transcript,
-                }
-            ],
+            messages=messages,
         )
 
         # Extract text from response

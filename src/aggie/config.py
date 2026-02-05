@@ -57,6 +57,16 @@ class TTSConfig:
 
 
 @dataclass
+class SessionConfig:
+    """Session context configuration."""
+
+    soft_decay_minutes: int = 10
+    hard_decay_minutes: int = 30
+    max_session_tokens: int = 8000
+    summarizer_model: str = "facebook/bart-large-cnn"
+
+
+@dataclass
 class IPCConfig:
     """IPC server configuration."""
 
@@ -94,6 +104,7 @@ class Config:
     tts: TTSConfig = field(default_factory=TTSConfig)
     ipc: IPCConfig = field(default_factory=IPCConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    session: SessionConfig = field(default_factory=SessionConfig)
 
     @classmethod
     def load(cls, path: Optional[str] = None) -> "Config":
@@ -141,4 +152,5 @@ class Config:
             tts=TTSConfig(**data.get("tts", {})),
             ipc=IPCConfig(**data.get("ipc", {})),
             logging=LoggingConfig(**data.get("logging", {})),
+            session=SessionConfig(**data.get("session", {})),
         )

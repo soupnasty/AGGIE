@@ -15,6 +15,8 @@ class CommandType(str, Enum):
     STATUS = "status"
     SHUTDOWN = "shutdown"
     DEBUG_DUMP = "debug_dump"
+    CONTEXT_STATUS = "context_status"
+    CONTEXT_CLEAR = "context_clear"
 
 
 class ResponseStatus(str, Enum):
@@ -112,5 +114,30 @@ class DebugDumpResponse:
         return cls(**parsed)
 
 
+@dataclass
+class ContextStatusResponse:
+    """Session context status response."""
+
+    status: ResponseStatus
+    turn_count: int
+    token_estimate: int
+    silence_seconds: float
+    has_summary: bool
+    error: Optional[str] = None
+
+    def to_json(self) -> str:
+        """Serialize response to JSON."""
+        d = asdict(self)
+        d["status"] = self.status.value
+        return json.dumps(d)
+
+    @classmethod
+    def from_json(cls, data: str) -> "ContextStatusResponse":
+        """Deserialize response from JSON."""
+        parsed = json.loads(data)
+        parsed["status"] = ResponseStatus(parsed["status"])
+        return cls(**parsed)
+
+
 # Type alias for any response
-Response = Union[StatusResponse, SimpleResponse, DebugDumpResponse]
+Response = Union[StatusResponse, SimpleResponse, DebugDumpResponse, ContextStatusResponse]

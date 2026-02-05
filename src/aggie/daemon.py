@@ -12,10 +12,12 @@ from .audio.buffer import AudioRingBuffer
 from .audio.capture import AudioCapture
 from .audio.playback import AudioPlayback
 from .config import Config
+from .context import SessionContext
 from .detection.wakeword import WakeWordDetector
 from .ipc.protocol import (
     Command,
     CommandType,
+    ContextStatusResponse,
     DebugDumpResponse,
     ResponseStatus,
     SimpleResponse,
@@ -73,6 +75,14 @@ class AggieDaemon:
         self._stt: Optional[SpeechToText] = None
         self._llm: Optional[ClaudeClient] = None
         self._tts: Optional[TextToSpeech] = None
+
+        # Session context for multi-turn conversations
+        self._session = SessionContext(
+            soft_decay_minutes=config.session.soft_decay_minutes,
+            hard_decay_minutes=config.session.hard_decay_minutes,
+            max_session_tokens=config.session.max_session_tokens,
+            summarizer_model=config.session.summarizer_model,
+        )
 
         # IPC server
         self._ipc_server = IPCServer(
@@ -192,6 +202,23 @@ class AggieDaemon:
                 content=content,
             )
 
+        elif command.type == CommandType.CONTEXT_STATUS:
+            ctx_status = self._session.get_status()
+            return ContextStatusResponse(
+                status=ResponseStatus.OK,
+                turn_count=ctx_status["turn_count"],
+                token_estimate=ctx_status["token_estimate"],
+                silence_seconds=ctx_status["silence_seconds"],
+                has_summary=ctx_status["has_summary"],
+            )
+
+        elif command.type == CommandType.CONTEXT_CLEAR:
+            self._session.clear()
+            return SimpleResponse(
+                status=ResponseStatus.OK,
+                message="Session context cleared",
+            )
+
         return SimpleResponse(
             status=ResponseStatus.ERROR,
             message="Unknown command",
@@ -224,14 +251,24 @@ class AggieDaemon:
 
             logger.info(f"Transcript: {transcript}")
 
-            # Get LLM response
+            # Check for context decay before processing
+            self._session.check_decay()
+
+            # Add user turn to session
+            self._session.add_turn("user", transcript)
+
+            # Get LLM response with full conversation context
             llm = self._ensure_llm()
-            response_text = await llm.get_response(transcript)
+            messages = self._session.build_messages()
+            response_text = await llm.get_response(messages)
 
             if not response_text.strip():
                 logger.warning("Empty LLM response")
                 await self._state_machine.transition(State.IDLE)
                 return
+
+            # Add assistant turn to session
+            self._session.add_turn("assistant", response_text)
 
             # Synthesize and play
             await self._state_machine.transition(State.SPEAKING)
