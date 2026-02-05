@@ -16,6 +16,7 @@ from .detection.wakeword import WakeWordDetector
 from .ipc.protocol import (
     Command,
     CommandType,
+    DebugDumpResponse,
     ResponseStatus,
     SimpleResponse,
     StatusResponse,
@@ -25,6 +26,7 @@ from .llm.claude import ClaudeClient
 from .state import State, StateMachine
 from .stt.whisper import SpeechToText
 from .tts.piper import TextToSpeech
+from .logging import set_current_state, get_debug_log_contents, get_debug_log_path
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +49,7 @@ class AggieDaemon:
 
         # State machine
         self._state_machine = StateMachine()
+        self._state_machine.on_transition(self._on_state_change)
         self._muted = False
 
         # Audio components
@@ -83,6 +86,10 @@ class AggieDaemon:
         # Frame queue (filled by audio callback, processed by main loop)
         self._pending_frames: list[np.ndarray] = []
         self._frame_count = 0
+
+    def _on_state_change(self, old_state: State, new_state: State, context) -> None:
+        """Sync state changes to the logging module for context injection."""
+        set_current_state(new_state)
 
     def _audio_frame_callback(self, frame: np.ndarray) -> None:
         """Queue audio frames for processing in main thread."""
@@ -171,6 +178,17 @@ class AggieDaemon:
         elif command.type == CommandType.SHUTDOWN:
             self._shutdown_event.set()
             return SimpleResponse(status=ResponseStatus.OK, message="Shutting down")
+
+        elif command.type == CommandType.DEBUG_DUMP:
+            log_path = get_debug_log_path()
+            content = get_debug_log_contents(lines=200)
+            line_count = content.count("\n")
+            return DebugDumpResponse(
+                status=ResponseStatus.OK,
+                log_path=str(log_path),
+                lines=line_count,
+                content=content,
+            )
 
         return SimpleResponse(
             status=ResponseStatus.ERROR,

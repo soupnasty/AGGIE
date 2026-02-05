@@ -83,6 +83,49 @@ aggie --debug               # Run daemon with debug logging
 aggie-ctl status            # Check daemon state
 ```
 
+## Debugging (IMPORTANT)
+
+AGGIE uses a two-tier logging system designed for LLM-assisted debugging. **Always check these logs first when investigating issues.**
+
+### Debug Log Location
+```
+~/.local/share/aggie/logs/debug.log      # Current session (JSON Lines)
+~/.local/share/aggie/logs/debug.log.1    # Previous session
+```
+
+### Quick Access Commands
+```bash
+aggie-ctl debug-dump              # Fetch last 200 lines of debug log
+aggie-ctl debug-dump --raw | jq   # Parse as JSON for filtering
+```
+
+### Log Format (JSON Lines)
+Each line is a JSON object with structured context:
+```json
+{"ts":"2026-02-04T10:15:32.123","level":"DEBUG","component":"wakeword","state":"IDLE","msg":"confidence=0.87","ctx":{...}}
+```
+
+Fields:
+- `ts`: ISO timestamp with milliseconds
+- `level`: DEBUG/INFO/WARNING/ERROR
+- `component`: Source module (wakeword, stt, llm, tts, daemon, etc.)
+- `state`: State machine state when log was emitted (IDLE/LISTENING/THINKING/SPEAKING)
+- `msg`: Log message
+- `ctx`: Optional structured context (config, metrics, etc.)
+- `exc`: Exception traceback if present
+
+### Debugging Workflow
+1. **Reproduce the issue** with daemon running (`aggie --debug` for verbose console)
+2. **Fetch logs**: `aggie-ctl debug-dump --raw > /tmp/debug.log`
+3. **Filter by component**: `jq 'select(.component=="wakeword")' /tmp/debug.log`
+4. **Filter by level**: `jq 'select(.level=="ERROR")' /tmp/debug.log`
+5. **Check state transitions**: `jq 'select(.msg | contains("transition"))' /tmp/debug.log`
+
+### Key Files for Debugging
+- `src/aggie/logging.py` - Logging infrastructure, formatters, log retrieval functions
+- `src/aggie/daemon.py` - State transitions logged here, check `_on_state_change()`
+- `src/aggie/ipc/protocol.py` - `DEBUG_DUMP` command definition
+
 ## Gotchas
 
 1. **Audio format**: Everything expects 16kHz mono int16 PCM

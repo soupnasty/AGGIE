@@ -2,38 +2,10 @@
 
 import asyncio
 import argparse
-import logging
-import sys
 
 from .config import Config
 from .daemon import AggieDaemon
-
-
-def setup_logging(config: Config) -> None:
-    """Configure logging based on config."""
-    root = logging.getLogger()
-    root.setLevel(getattr(logging, config.logging.level.upper()))
-
-    console = logging.StreamHandler(sys.stderr)
-    console.setFormatter(
-        logging.Formatter(
-            "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        )
-    )
-    root.addHandler(console)
-
-    if config.logging.file:
-        file_handler = logging.FileHandler(config.logging.file)
-        file_handler.setFormatter(
-            logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-        )
-        root.addHandler(file_handler)
-
-    # Reduce noise from libraries
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("anthropic").setLevel(logging.WARNING)
-    logging.getLogger("faster_whisper").setLevel(logging.WARNING)
+from .logging import setup_logging
 
 
 def main() -> None:
@@ -62,7 +34,12 @@ def main() -> None:
     if args.debug:
         config.logging.level = "DEBUG"
 
-    setup_logging(config)
+    setup_logging(
+        config,
+        console_level=config.logging.level,
+        debug_to_file=config.logging.debug_to_file,
+        use_colors=config.logging.use_colors,
+    )
 
     # Run the daemon
     daemon = AggieDaemon(config)

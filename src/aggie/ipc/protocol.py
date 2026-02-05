@@ -14,6 +14,7 @@ class CommandType(str, Enum):
     CANCEL = "cancel"
     STATUS = "status"
     SHUTDOWN = "shutdown"
+    DEBUG_DUMP = "debug_dump"
 
 
 class ResponseStatus(str, Enum):
@@ -86,5 +87,29 @@ class SimpleResponse:
         return cls(**parsed)
 
 
+@dataclass
+class DebugDumpResponse:
+    """Debug log dump response."""
+
+    status: ResponseStatus
+    log_path: str
+    lines: int
+    content: str
+    error: Optional[str] = None
+
+    def to_json(self) -> str:
+        """Serialize response to JSON."""
+        d = asdict(self)
+        d["status"] = self.status.value
+        return json.dumps(d)
+
+    @classmethod
+    def from_json(cls, data: str) -> "DebugDumpResponse":
+        """Deserialize response from JSON."""
+        parsed = json.loads(data)
+        parsed["status"] = ResponseStatus(parsed["status"])
+        return cls(**parsed)
+
+
 # Type alias for any response
-Response = Union[StatusResponse, SimpleResponse]
+Response = Union[StatusResponse, SimpleResponse, DebugDumpResponse]
