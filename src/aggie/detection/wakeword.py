@@ -1,11 +1,42 @@
 """Wake word detection using openWakeWord."""
 
 import logging
+import os
+from pathlib import Path
 from typing import Optional, Tuple
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_model_path(model_path: str) -> str:
+    """Resolve model path, checking bundled models directory first.
+
+    Args:
+        model_path: Model name (e.g., "hey_aggie") or full path.
+
+    Returns:
+        Resolved path to model file, or original if it's a built-in model name.
+    """
+    # If it's already an absolute path or has an extension, use as-is
+    if os.path.isabs(model_path) or "." in model_path:
+        # Expand ~ if present
+        return os.path.expanduser(model_path)
+
+    # Check bundled models directory
+    # Look relative to the package root (src/aggie/../../models)
+    package_dir = Path(__file__).parent.parent.parent.parent
+    bundled_models = package_dir / "models"
+
+    for ext in [".tflite", ".onnx"]:
+        bundled_path = bundled_models / f"{model_path}{ext}"
+        if bundled_path.exists():
+            logger.info(f"Using bundled model: {bundled_path}")
+            return str(bundled_path)
+
+    # Fall back to openWakeWord built-in models
+    return model_path
 
 
 class WakeWordDetector:
@@ -18,7 +49,7 @@ class WakeWordDetector:
 
     def __init__(
         self,
-        model_path: str = "hey_jarvis",
+        model_path: str = "hey_aggie",
         threshold: float = 0.5,
         vad_threshold: float = 0.5,
         enable_speex: bool = False,  # Disabled by default - requires speexdsp_ns
@@ -26,7 +57,8 @@ class WakeWordDetector:
         """Initialize wake word detector.
 
         Args:
-            model_path: Pre-trained model name or path to custom model.
+            model_path: Model name (e.g., "hey_aggie") or path to custom model.
+                        Bundled models in models/ directory are checked first.
             threshold: Detection threshold (0.0-1.0).
             vad_threshold: VAD threshold for noise rejection.
             enable_speex: Enable Speex noise suppression (Linux only).
@@ -34,16 +66,20 @@ class WakeWordDetector:
         import openwakeword
         from openwakeword.model import Model
 
-        # Ensure models are downloaded
-        logger.info("Checking/downloading wake word models...")
-        openwakeword.utils.download_models()
+        # Resolve model path (check bundled models first)
+        resolved_path = _resolve_model_path(model_path)
+
+        # Only download built-in models if we're not using a custom one
+        if resolved_path == model_path and not os.path.exists(resolved_path):
+            logger.info("Checking/downloading wake word models...")
+            openwakeword.utils.download_models()
 
         self._threshold = threshold
-        self._model_name = self._normalize_model_name(model_path)
+        self._model_name = self._normalize_model_name(resolved_path)
 
-        logger.info(f"Loading wake word model: {model_path}")
+        logger.info(f"Loading wake word model: {resolved_path}")
         self._model = Model(
-            wakeword_models=[model_path],
+            wakeword_models=[resolved_path],
             vad_threshold=vad_threshold,
             enable_speex_noise_suppression=enable_speex,
         )

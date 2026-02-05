@@ -18,8 +18,9 @@ audio:
   cues_enabled: false
 
 wakeword:
-  # Wake word model name or path
-  model: "hey_jarvis"
+  # Wake word model: use "hey_aggie" (bundled) or path to custom .tflite/.onnx
+  # See TRAIN_WAKE_WORD.md to train your own model
+  model: "hey_aggie"
   # Detection threshold (0.0-1.0, higher = fewer false positives)
   threshold: 0.5
   # VAD threshold for noise rejection

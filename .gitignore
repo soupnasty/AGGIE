@@ -58,9 +58,13 @@ dmypy.json
 .env.local
 
 # Model caches (can be large)
-*.onnx
-*.tflite
-models/
+# Note: wake word models in models/ ARE tracked (see below)
+
+# Wake word models directory - tracked for out-of-box experience
+!models/
+!models/*.tflite
+!models/*.onnx
+!models/.gitkeep
 
 # Audio files (for testing)
 *.wav

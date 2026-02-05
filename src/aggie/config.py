@@ -26,7 +26,7 @@ class AudioConfig:
 class WakeWordConfig:
     """Wake word detection configuration."""
 
-    model: str = "hey_jarvis"
+    model: str = "hey_aggie"
     threshold: float = 0.5
     vad_threshold: float = 0.5
 
