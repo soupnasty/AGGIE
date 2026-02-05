@@ -75,7 +75,7 @@ class RouterConfig:
     """Query router configuration."""
 
     enabled: bool = True  # Enable routing (False = always use Claude)
-    llama_model: str = "llama3.1:8b-instruct-q4_0"  # Ollama model name
+    llama_model: str = "llama3.1:8b"  # Ollama model name
     llama_host: str = "http://localhost:11434"  # Ollama API URL
     claude_fallback: bool = True  # Fall back to Claude if Llama unavailable
 

@@ -29,14 +29,14 @@ Respond naturally as if speaking to someone."""
 
     def __init__(
         self,
-        model: str = "llama3.1:8b-instruct-q4_0",
+        model: str = "llama3.1:8b",
         host: str = "http://localhost:11434",
         timeout: float = 30.0,
     ) -> None:
         """Initialize Llama client.
 
         Args:
-            model: Ollama model name (e.g., "llama3.1:8b-instruct-q4_0").
+            model: Ollama model name (e.g., "llama3.1:8b").
             host: Ollama API host URL.
             timeout: Request timeout in seconds.
         """

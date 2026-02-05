@@ -54,7 +54,7 @@ class Router:
 
     def __init__(
         self,
-        llama_model: str = "llama3.1:8b-instruct-q4_0",
+        llama_model: str = "llama3.1:8b",
         llama_host: str = "http://localhost:11434",
         claude_fallback: bool = True,
     ) -> None:

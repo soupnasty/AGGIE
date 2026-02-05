@@ -69,7 +69,7 @@ router:
   # Enable query routing (Llama local + Claude API)
   enabled: true
   # Ollama model for local inference
-  llama_model: "llama3.1:8b-instruct-q4_0"
+  llama_model: "llama3.1:8b"
   # Ollama API URL
   llama_host: "http://localhost:11434"
   # Fall back to Claude if Llama unavailable
