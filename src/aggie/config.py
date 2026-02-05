@@ -71,6 +71,16 @@ class SessionConfig:
 
 
 @dataclass
+class RouterConfig:
+    """Query router configuration."""
+
+    enabled: bool = True  # Enable routing (False = always use Claude)
+    llama_model: str = "llama3.1:8b-instruct-q4_0"  # Ollama model name
+    llama_host: str = "http://localhost:11434"  # Ollama API URL
+    claude_fallback: bool = True  # Fall back to Claude if Llama unavailable
+
+
+@dataclass
 class IPCConfig:
     """IPC server configuration."""
 
@@ -109,6 +119,7 @@ class Config:
     ipc: IPCConfig = field(default_factory=IPCConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     session: SessionConfig = field(default_factory=SessionConfig)
+    router: RouterConfig = field(default_factory=RouterConfig)
 
     @classmethod
     def load(cls, path: Optional[str] = None) -> "Config":
@@ -157,4 +168,5 @@ class Config:
             ipc=IPCConfig(**data.get("ipc", {})),
             logging=LoggingConfig(**data.get("logging", {})),
             session=SessionConfig(**data.get("session", {})),
+            router=RouterConfig(**data.get("router", {})),
         )

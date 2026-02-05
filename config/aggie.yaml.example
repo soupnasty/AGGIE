@@ -64,3 +64,17 @@ logging:
   level: "INFO"
   # Log file path (optional, logs to stderr by default)
   file: null
+
+router:
+  # Enable query routing (Llama local + Claude API)
+  enabled: true
+  # Ollama model for local inference
+  llama_model: "llama3.1:8b-instruct-q4_0"
+  # Ollama API URL
+  llama_host: "http://localhost:11434"
+  # Fall back to Claude if Llama unavailable
+  claude_fallback: true
+  # Routing:
+  #   - System commands (time, date) handled locally
+  #   - "use claude", "ask claude" -> Claude API
+  #   - Everything else -> Llama (local)
