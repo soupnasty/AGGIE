@@ -452,6 +452,11 @@ class AggieDaemon:
         tools = self._tool_registry.get_tools() if self._tool_registry else None
         if tools and system_prompt:
             system_prompt += self.TOOL_SYSTEM_PROMPT_ADDITION
+            # Append MCP server context files (e.g. Playwright design checklist)
+            if self._mcp_manager:
+                mcp_context = self._mcp_manager.get_context()
+                if mcp_context:
+                    system_prompt += "\n\n" + mcp_context
 
         # Accumulate full response for session context
         full_response: list[str] = []
@@ -601,6 +606,13 @@ class AggieDaemon:
     async def run(self) -> None:
         """Main daemon loop."""
         logger.info("Starting AGGIE daemon")
+
+        # Load .env file before anything that needs env vars (e.g. MCP servers)
+        from dotenv import load_dotenv
+        env_path = os.path.expanduser("~/.config/aggie/.env")
+        if os.path.exists(env_path):
+            load_dotenv(env_path)
+            logger.info(f"Loaded environment from {env_path}")
 
         # Set up signal handlers
         loop = asyncio.get_running_loop()

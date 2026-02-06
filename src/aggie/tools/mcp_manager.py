@@ -1,7 +1,10 @@
 """MCP server lifecycle and tool routing."""
 
 import logging
+import os
+import re
 from contextlib import AsyncExitStack
+from pathlib import Path
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -22,6 +25,8 @@ class MCPManager:
         self._tool_map: dict[str, tuple[ClientSession, str]] = {}
         # tool_name -> tool definition dict (Anthropic API format)
         self._tool_defs: dict[str, dict] = {}
+        # server context loaded from context_file
+        self._server_contexts: list[str] = []
 
     async def start(self, servers: list) -> None:
         """Connect to all configured MCP servers.
@@ -44,12 +49,33 @@ class MCPManager:
             f"from {server_count} servers"
         )
 
+    @staticmethod
+    def _resolve_env(env_dict: dict[str, str]) -> dict[str, str]:
+        """Resolve ${VAR} references in env values from os.environ.
+
+        Merges with the parent process environment so subprocesses
+        retain PATH, HOME, etc.
+        """
+        resolved = dict(os.environ)
+        for key, value in env_dict.items():
+            # Replace ${VAR} patterns with os.environ values
+            resolved[key] = re.sub(
+                r"\$\{(\w+)\}",
+                lambda m: os.environ.get(m.group(1), ""),
+                value,
+            )
+        return resolved
+
     async def _connect_server(self, server_config) -> None:
         """Connect to a single MCP server and register its tools."""
+        env = None
+        if server_config.env:
+            env = self._resolve_env(server_config.env)
+
         params = StdioServerParameters(
             command=server_config.command,
             args=server_config.args,
-            env=server_config.env if server_config.env else None,
+            env=env,
         )
 
         stdio_transport = await self._exit_stack.enter_async_context(
@@ -79,6 +105,16 @@ class MCPManager:
                 "input_schema": tool.inputSchema,
             }
 
+        # Load context file if specified
+        if server_config.context_file:
+            context_path = Path(server_config.context_file).expanduser()
+            if context_path.exists():
+                context = context_path.read_text().strip()
+                self._server_contexts.append(context)
+                logger.info(f"Loaded context for '{server_config.name}' ({len(context)} chars)")
+            else:
+                logger.warning(f"Context file not found for '{server_config.name}': {context_path}")
+
         logger.info(
             f"MCP server '{server_config.name}': "
             f"{len(response.tools)} tools registered"
@@ -87,6 +123,10 @@ class MCPManager:
     def get_tools(self) -> list[dict]:
         """Return all MCP tool definitions in Anthropic API format."""
         return list(self._tool_defs.values())
+
+    def get_context(self) -> str:
+        """Return combined context from all servers with context files."""
+        return "\n\n".join(self._server_contexts)
 
     def has_tool(self, tool_name: str) -> bool:
         """Check if a tool name belongs to an MCP server."""
