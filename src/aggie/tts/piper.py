@@ -79,12 +79,18 @@ class TextToSpeech:
 
         # Check in piper data directory
         data_dir = Path.home() / ".local" / "share" / "piper-voices"
-        model_dir = data_dir / self._voice_model
-        onnx_file = model_dir / f"{self._voice_model}.onnx"
 
-        if onnx_file.exists():
-            self._model_path = onnx_file
-            return onnx_file
+        # Check flat layout: data_dir/<voice>.onnx
+        flat_onnx = data_dir / f"{self._voice_model}.onnx"
+        if flat_onnx.exists():
+            self._model_path = flat_onnx
+            return flat_onnx
+
+        # Check nested layout: data_dir/<voice>/<voice>.onnx
+        nested_onnx = data_dir / self._voice_model / f"{self._voice_model}.onnx"
+        if nested_onnx.exists():
+            self._model_path = nested_onnx
+            return nested_onnx
 
         # Try to download the model
         logger.info(f"Downloading Piper voice: {self._voice_model}")
@@ -146,10 +152,10 @@ class TextToSpeech:
         model_path = self._get_model_path()
         voice = PiperVoice.load(str(model_path), use_cuda=self._use_cuda)
 
-        # Synthesize to bytes
+        # Synthesize — returns AudioChunk objects with audio_int16_bytes
         audio_bytes = b""
-        for chunk in voice.synthesize_stream_raw(text):
-            audio_bytes += chunk
+        for chunk in voice.synthesize(text):
+            audio_bytes += chunk.audio_int16_bytes
 
         # Convert to numpy array
         audio = np.frombuffer(audio_bytes, dtype=np.int16)

@@ -545,6 +545,16 @@ class AggieDaemon:
                         else:
                             self._silence_frames = 0
 
+                        # Debug: log energy every 10 frames (~800ms)
+                        if self._recording_frames % 10 == 0:
+                            frame_duration_dbg = AudioCapture.FRAME_DURATION_MS / 1000.0
+                            logger.debug(
+                                f"[LISTENING] frame={self._recording_frames} "
+                                f"energy={energy:.1f} threshold={silence_threshold:.1f} "
+                                f"silence_frames={self._silence_frames} "
+                                f"silence={self._silence_frames * frame_duration_dbg:.2f}s"
+                            )
+
                     # Check for end conditions
                     frame_duration = AudioCapture.FRAME_DURATION_MS / 1000.0
                     silence_duration = self._silence_frames * frame_duration

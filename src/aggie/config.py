@@ -15,7 +15,7 @@ class AudioConfig:
     sample_rate: int = 16000
     channels: int = 1
     pre_roll_seconds: float = 1.5
-    silence_threshold: float = 500.0
+    silence_threshold: float = 2000.0
     silence_duration: float = 1.5
     max_recording_duration: float = 30.0
     # Audio feedback cues (chimes for wake word, done listening, etc.)
