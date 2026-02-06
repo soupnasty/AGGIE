@@ -27,7 +27,6 @@ from .ipc.protocol import (
 from .ipc.server import IPCServer
 from .llm.claude import APIError, ClaudeClient
 from .llm.sentence_buffer import sentences_from_stream
-from .router import LlamaError, ResponseSource, Router
 from .state import State, StateMachine
 from .stt.whisper import SpeechToText, detect_gpu
 from .tts.piper import TextToSpeech
@@ -78,15 +77,6 @@ class AggieDaemon:
         self._stt: Optional[SpeechToText] = None
         self._llm: Optional[ClaudeClient] = None
         self._tts: Optional[TextToSpeech] = None
-
-        # Query router for Llama/Claude selection
-        self._router: Optional[Router] = None
-        if config.router.enabled:
-            self._router = Router(
-                llama_model=config.router.llama_model,
-                llama_host=config.router.llama_host,
-                claude_fallback=config.router.claude_fallback,
-            )
 
         # Audio cues (optional)
         self._audio_cues: Optional[AudioCues] = None
@@ -249,7 +239,7 @@ class AggieDaemon:
         )
 
     async def _process_recording(self) -> None:
-        """Process recorded audio: STT -> route -> LLM -> streaming TTS."""
+        """Process recorded audio: STT -> LLM -> streaming TTS."""
         # Play "done listening" cue before processing
         await self._play_cue(CueType.DONE_LISTENING)
         await self._state_machine.transition(State.THINKING)
@@ -276,73 +266,19 @@ class AggieDaemon:
 
             logger.info(f"Transcript: {transcript}")
 
-            # Route the query
-            if self._router:
-                decision = self._router.route(transcript)
-                logger.info(f"Routed to: {decision.source.value}")
+            # Check for context decay before processing
+            self._session.check_decay()
 
-                # Handle system commands (no LLM needed)
-                if decision.source == ResponseSource.SYSTEM:
-                    await self._speak_system_response(decision.system_response.text)
-                    return
+            # Add user turn to session
+            self._session.add_turn("user", transcript)
 
-                # Check for context decay before processing
-                self._session.check_decay()
-
-                # Add user turn to session (use original transcript for context)
-                self._session.add_turn("user", transcript)
-
-                tts = self._ensure_tts()
-                messages = self._session.build_messages()
-
-                if decision.source == ResponseSource.LLAMA:
-                    await self._process_llama_response(tts, messages)
-                else:
-                    await self._process_claude_response(tts, messages)
-            else:
-                # Router disabled - always use Claude
-                self._session.check_decay()
-                self._session.add_turn("user", transcript)
-                tts = self._ensure_tts()
-                messages = self._session.build_messages()
-                await self._process_claude_response(tts, messages)
+            tts = self._ensure_tts()
+            messages = self._session.build_messages()
+            await self._process_claude_response(tts, messages)
 
         except Exception as e:
             logger.error(f"Error processing recording: {e}", exc_info=True)
             await self._state_machine.force_transition(State.IDLE)
-
-    async def _speak_system_response(self, text: str) -> None:
-        """Speak a system command response (time, date, etc.)."""
-        logger.info(f"System response: {text}")
-        try:
-            await self._state_machine.transition(State.SPEAKING)
-            tts = self._ensure_tts()
-            audio_data, sample_rate = tts.synthesize(text)
-            if len(audio_data) > 0:
-                self._playback_task = asyncio.create_task(
-                    self._play_with_completion(audio_data, sample_rate)
-                )
-            else:
-                await self._state_machine.force_transition(State.IDLE)
-        except Exception as e:
-            logger.error(f"Failed to speak system response: {e}")
-            await self._state_machine.force_transition(State.IDLE)
-
-    async def _process_llama_response(
-        self,
-        tts: "TextToSpeech",
-        messages: list[dict],
-    ) -> None:
-        """Stream response from Llama through TTS."""
-        try:
-            await self._stream_llama_response(tts, messages)
-        except LlamaError as e:
-            logger.error(f"Llama failed: {e}")
-            if self._router and self._router.claude_fallback_enabled:
-                logger.info("Falling back to Claude")
-                await self._process_claude_response(tts, messages)
-            else:
-                await self._speak_error("Sorry, I'm having trouble with my local model.")
 
     async def _process_claude_response(
         self,
@@ -356,60 +292,6 @@ class AggieDaemon:
         except APIError as e:
             logger.error(f"Claude API failed: {e}")
             await self._speak_error("Sorry, I'm running into issues with Claude.")
-
-    async def _stream_llama_response(
-        self,
-        tts: "TextToSpeech",
-        messages: list[dict],
-    ) -> None:
-        """Stream Llama response through TTS and playback.
-
-        Similar to _stream_response but uses the Llama client via router.
-
-        Args:
-            tts: TTS engine.
-            messages: Conversation messages.
-        """
-        if not self._router:
-            raise LlamaError("Router not initialized")
-
-        # Accumulate full response for session context
-        full_response: list[str] = []
-
-        async def sentence_generator():
-            """Generate sentences from Llama stream."""
-            token_stream = self._router.stream_llama_response(messages)
-            async for sentence in sentences_from_stream(token_stream):
-                full_response.append(sentence)
-                yield sentence
-
-        # Transition to SPEAKING on first sentence
-        first_sentence = True
-
-        async def audio_generator():
-            """Generate audio chunks, transitioning to SPEAKING on first chunk."""
-            nonlocal first_sentence
-            async for audio_data, sample_rate in tts.synthesize_stream(sentence_generator()):
-                if first_sentence:
-                    await self._state_machine.transition(State.SPEAKING)
-                    first_sentence = False
-                yield audio_data, sample_rate
-
-        # Start streaming playback as background task for interrupt support
-        self._playback_task = asyncio.create_task(
-            self._streaming_playback_with_completion(audio_generator())
-        )
-
-        # Wait for playback to complete (or be interrupted)
-        await self._playback_task
-
-        # Save full response to session context
-        response_text = " ".join(full_response)
-        if response_text.strip():
-            self._session.add_turn("assistant", response_text)
-            logger.info(f"Llama response ({len(full_response)} sentences): '{response_text[:80]}...'")
-        else:
-            logger.warning("Empty Llama response")
 
     async def _stream_response(
         self,
