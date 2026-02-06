@@ -2,9 +2,10 @@
 
 import asyncio
 import logging
+import os
 import signal
 import time
-from typing import Optional
+from typing import AsyncIterator, Optional
 
 import numpy as np
 
@@ -29,6 +30,7 @@ from .llm.claude import APIError, ClaudeClient
 from .llm.sentence_buffer import sentences_from_stream
 from .state import State, StateMachine
 from .stt.whisper import SpeechToText, detect_gpu
+from .tools import ToolRegistry
 from .tts.piper import TextToSpeech
 from .logging import set_current_state, get_debug_log_contents, get_debug_log_path
 
@@ -83,6 +85,15 @@ class AggieDaemon:
         if config.audio.cues_enabled:
             self._audio_cues = AudioCues()
             logger.info("Audio cues enabled")
+
+        # Tool registry
+        self._tool_registry: Optional[ToolRegistry] = None
+        if config.tools.enabled:
+            self._tool_registry = ToolRegistry(
+                working_dir=os.path.expanduser(config.tools.working_dir),
+                timeout=config.tools.timeout,
+                max_output_chars=config.tools.max_output_chars,
+            )
 
         # Three-tier context management
         self._project_state = ProjectState()
@@ -318,6 +329,94 @@ class AggieDaemon:
             logger.error(f"Claude API failed: {e}")
             await self._speak_error("Sorry, I'm running into issues with Claude.")
 
+    TOOL_SYSTEM_PROMPT_ADDITION = (
+        "\n\nYou have access to a bash tool for running commands on the local machine. "
+        "Use it when the user asks you to do something that requires local access "
+        "(reading files, running code, git operations, etc.). "
+        "Be resourceful — if your first command doesn't find what you need, try alternatives "
+        "(e.g. find, locate, grep) before giving up. Solve the problem, don't ask for clarification "
+        "unless you've exhausted reasonable approaches. "
+        "Keep spoken responses concise — summarize tool output rather than reading it verbatim."
+    )
+
+    async def _agent_text_stream(
+        self,
+        llm: ClaudeClient,
+        messages: list[dict],
+        system_prompt: Optional[str],
+        tools: Optional[list[dict]],
+        tool_registry: Optional[ToolRegistry],
+        max_tokens: Optional[int],
+        max_agent_turns: int,
+    ) -> AsyncIterator[str]:
+        """Async generator yielding text tokens across multiple API round trips.
+
+        When Claude uses a tool, execution pauses text output, runs the command,
+        sends results back, and resumes streaming. The downstream sentence buffer
+        and TTS see a continuous token stream regardless of tool calls.
+
+        Args:
+            llm: Claude client.
+            messages: Conversation messages.
+            system_prompt: System prompt.
+            tools: Tool definitions (None if tools disabled).
+            tool_registry: Registry for executing tools.
+            max_tokens: Max tokens per API call.
+            max_agent_turns: Maximum tool-use round trips.
+
+        Yields:
+            Text tokens from Claude's response.
+        """
+        loop_messages = list(messages)
+
+        for turn in range(max_agent_turns):
+            async with llm.create_stream(
+                loop_messages, system_prompt, tools, max_tokens
+            ) as stream:
+                async for text in stream.text_stream:
+                    yield text
+                final_message = await stream.get_final_message()
+
+            if final_message.stop_reason != "tool_use":
+                return
+
+            # Yield a space so the sentence buffer can flush the last sentence
+            # from this stream before the next API round begins
+            yield " "
+
+            # Build assistant content from the response
+            assistant_content = []
+            for block in final_message.content:
+                if block.type == "text":
+                    assistant_content.append({"type": "text", "text": block.text})
+                elif block.type == "tool_use":
+                    assistant_content.append(
+                        {
+                            "type": "tool_use",
+                            "id": block.id,
+                            "name": block.name,
+                            "input": block.input,
+                        }
+                    )
+            loop_messages.append({"role": "assistant", "content": assistant_content})
+
+            # Execute tool calls and collect results
+            tool_results = []
+            for block in final_message.content:
+                if block.type == "tool_use":
+                    logger.info(f"Tool call: {block.name}({block.input})")
+                    output = await tool_registry.execute(block.name, block.input)
+                    tool_results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": output,
+                        }
+                    )
+            loop_messages.append({"role": "user", "content": tool_results})
+
+        logger.warning(f"Agent loop hit max turns ({max_agent_turns})")
+
     async def _stream_response(
         self,
         llm: ClaudeClient,
@@ -336,12 +435,29 @@ class AggieDaemon:
             messages: Conversation messages to send to Claude.
             system_prompt: Optional system prompt override.
         """
+        # Append tool instructions to system prompt when tools are available
+        tools = self._tool_registry.get_tools() if self._tool_registry else None
+        if tools and system_prompt:
+            system_prompt += self.TOOL_SYSTEM_PROMPT_ADDITION
+
         # Accumulate full response for session context
         full_response: list[str] = []
 
         async def sentence_generator():
             """Generate sentences from Claude stream, accumulating full response."""
-            token_stream = llm.stream_response(messages, system_prompt=system_prompt)
+            if tools:
+                max_tokens = self._config.tools.max_tokens
+                token_stream = self._agent_text_stream(
+                    llm,
+                    messages,
+                    system_prompt,
+                    tools,
+                    self._tool_registry,
+                    max_tokens,
+                    self._config.tools.max_agent_turns,
+                )
+            else:
+                token_stream = llm.stream_response(messages, system_prompt=system_prompt)
             async for sentence in sentences_from_stream(token_stream):
                 full_response.append(sentence)
                 yield sentence
@@ -540,7 +656,7 @@ class AggieDaemon:
                         if detected:
                             logger.info("Wake word detected! Starting to listen...")
                             await self._play_cue(CueType.WAKE)
-                            self._recording_buffer = [self._audio_buffer.get_all()]
+                            self._recording_buffer = []
                             self._silence_frames = 0
                             self._recording_frames = 0
                             await self._state_machine.transition(State.LISTENING)
@@ -592,7 +708,7 @@ class AggieDaemon:
                             logger.info("Wake word detected during playback - interrupting!")
                             self._audio_playback.cancel()
                             await self._play_cue(CueType.WAKE)
-                            self._recording_buffer = [self._audio_buffer.get_all()]
+                            self._recording_buffer = []
                             self._silence_frames = 0
                             self._recording_frames = 0
                             await self._state_machine.transition(State.LISTENING)

@@ -61,6 +61,18 @@ class TTSConfig:
 
 
 @dataclass
+class ToolConfig:
+    """Tool access configuration."""
+
+    enabled: bool = True
+    working_dir: str = "~"
+    timeout: float = 30.0
+    max_output_chars: int = 16000
+    max_agent_turns: int = 10
+    max_tokens: int = 4096
+
+
+@dataclass
 class ContextConfig:
     """Three-tier context management configuration."""
 
@@ -106,6 +118,7 @@ class Config:
     stt: STTConfig = field(default_factory=STTConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
     tts: TTSConfig = field(default_factory=TTSConfig)
+    tools: ToolConfig = field(default_factory=ToolConfig)
     ipc: IPCConfig = field(default_factory=IPCConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     context: ContextConfig = field(default_factory=ContextConfig)
@@ -154,6 +167,7 @@ class Config:
             stt=STTConfig(**data.get("stt", {})),
             llm=LLMConfig(**data.get("llm", {})),
             tts=TTSConfig(**data.get("tts", {})),
+            tools=ToolConfig(**data.get("tools", {})),
             ipc=IPCConfig(**data.get("ipc", {})),
             logging=LoggingConfig(**data.get("logging", {})),
             context=ContextConfig(**data.get("context", {})),

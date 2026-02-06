@@ -170,6 +170,40 @@ Respond naturally as if speaking to someone."""
             retryable=True
         )
 
+    def create_stream(
+        self,
+        messages: list[dict],
+        system_prompt: Optional[str] = None,
+        tools: Optional[list[dict]] = None,
+        max_tokens: Optional[int] = None,
+    ):
+        """Return the SDK's streaming context manager for tool-aware streaming.
+
+        Usage:
+            async with llm.create_stream(messages, tools=tools) as stream:
+                async for text in stream.text_stream:
+                    ...
+                msg = await stream.get_final_message()
+
+        Args:
+            messages: Conversation messages.
+            system_prompt: Optional system prompt override.
+            tools: Optional tool definitions.
+            max_tokens: Optional max tokens override.
+
+        Returns:
+            AsyncMessageStreamManager from the Anthropic SDK.
+        """
+        kwargs = {
+            "model": self._model,
+            "max_tokens": max_tokens or self._max_tokens,
+            "system": system_prompt or self.SYSTEM_PROMPT,
+            "messages": messages,
+        }
+        if tools:
+            kwargs["tools"] = tools
+        return self._client.messages.stream(**kwargs)
+
     async def stream_response(
         self, input_data: Union[str, list[dict]], system_prompt: Optional[str] = None
     ) -> AsyncIterator[str]:
