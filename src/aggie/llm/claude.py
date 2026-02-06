@@ -73,7 +73,7 @@ Respond naturally as if speaking to someone."""
         self._max_retries = max_retries
 
     async def get_response(
-        self, input_data: Union[str, list[dict]]
+        self, input_data: Union[str, list[dict]], system_prompt: Optional[str] = None
     ) -> str:
         """Get a response from Claude with retry logic.
 
@@ -118,7 +118,7 @@ Respond naturally as if speaking to someone."""
                 message = await self._client.messages.create(
                     model=self._model,
                     max_tokens=self._max_tokens,
-                    system=self.SYSTEM_PROMPT,
+                    system=system_prompt or self.SYSTEM_PROMPT,
                     messages=messages,
                 )
 
@@ -171,7 +171,7 @@ Respond naturally as if speaking to someone."""
         )
 
     async def stream_response(
-        self, input_data: Union[str, list[dict]]
+        self, input_data: Union[str, list[dict]], system_prompt: Optional[str] = None
     ) -> AsyncIterator[str]:
         """Stream a response from Claude, yielding text chunks.
 
@@ -212,7 +212,7 @@ Respond naturally as if speaking to someone."""
             async with self._client.messages.stream(
                 model=self._model,
                 max_tokens=self._max_tokens,
-                system=self.SYSTEM_PROMPT,
+                system=system_prompt or self.SYSTEM_PROMPT,
                 messages=messages,
             ) as stream:
                 async for text in stream.text_stream:

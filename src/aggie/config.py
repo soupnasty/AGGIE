@@ -61,13 +61,13 @@ class TTSConfig:
 
 
 @dataclass
-class SessionConfig:
-    """Session context configuration."""
+class ContextConfig:
+    """Three-tier context management configuration."""
 
-    soft_decay_minutes: int = 10
-    hard_decay_minutes: int = 30
-    max_session_tokens: int = 8000
-    summarizer_model: str = "facebook/bart-large-cnn"
+    compress_every_turns: int = 7
+    recent_window: int = 6
+    haiku_model: str = "claude-haiku-4-5-20251001"
+    max_context_tokens: int = 8000
 
 
 @dataclass
@@ -108,7 +108,7 @@ class Config:
     tts: TTSConfig = field(default_factory=TTSConfig)
     ipc: IPCConfig = field(default_factory=IPCConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
-    session: SessionConfig = field(default_factory=SessionConfig)
+    context: ContextConfig = field(default_factory=ContextConfig)
 
     @classmethod
     def load(cls, path: Optional[str] = None) -> "Config":
@@ -156,5 +156,5 @@ class Config:
             tts=TTSConfig(**data.get("tts", {})),
             ipc=IPCConfig(**data.get("ipc", {})),
             logging=LoggingConfig(**data.get("logging", {})),
-            session=SessionConfig(**data.get("session", {})),
+            context=ContextConfig(**data.get("context", {})),
         )

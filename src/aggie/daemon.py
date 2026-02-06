@@ -13,7 +13,7 @@ from .audio.capture import AudioCapture
 from .audio.cues import AudioCues, CueType
 from .audio.playback import AudioPlayback
 from .config import Config
-from .context import SessionContext
+from .context import ContextCompressor, ProjectState, PromptComposer
 from .detection.wakeword import WakeWordDetector
 from .ipc.protocol import (
     Command,
@@ -84,13 +84,24 @@ class AggieDaemon:
             self._audio_cues = AudioCues()
             logger.info("Audio cues enabled")
 
-        # Session context for multi-turn conversations
-        self._session = SessionContext(
-            soft_decay_minutes=config.session.soft_decay_minutes,
-            hard_decay_minutes=config.session.hard_decay_minutes,
-            max_session_tokens=config.session.max_session_tokens,
-            summarizer_model=config.session.summarizer_model,
+        # Three-tier context management
+        self._project_state = ProjectState()
+        self._compressor = ContextCompressor(
+            state=self._project_state,
+            compress_every=config.context.compress_every_turns,
+            haiku_model=config.context.haiku_model,
+            recent_window=config.context.recent_window,
         )
+        self._composer = PromptComposer(state=self._project_state)
+
+        # Voice phrases that trigger a full context clear
+        self._clear_phrases = {
+            "fresh start",
+            "new conversation",
+            "forget everything",
+            "start over",
+            "self destruct",
+        }
 
         # IPC server
         self._ipc_server = IPCServer(
@@ -216,20 +227,20 @@ class AggieDaemon:
             )
 
         elif command.type == CommandType.CONTEXT_STATUS:
-            ctx_status = self._session.get_status()
+            ctx_status = self._project_state.get_status()
             return ContextStatusResponse(
                 status=ResponseStatus.OK,
                 turn_count=ctx_status["turn_count"],
                 token_estimate=ctx_status["token_estimate"],
                 silence_seconds=ctx_status["silence_seconds"],
-                has_summary=ctx_status["has_summary"],
+                has_summary=ctx_status["has_history_summary"],
             )
 
         elif command.type == CommandType.CONTEXT_CLEAR:
-            self._session.clear()
+            self._project_state.clear()
             return SimpleResponse(
                 status=ResponseStatus.OK,
-                message="Session context cleared",
+                message="Context cleared",
             )
 
         return SimpleResponse(
@@ -266,15 +277,19 @@ class AggieDaemon:
 
             logger.info(f"Transcript: {transcript}")
 
-            # Check for context decay before processing
-            self._session.check_decay()
+            # Check for context-clear voice command
+            if self._is_clear_phrase(transcript):
+                logger.info("Context clear phrase detected, resetting project state")
+                self._project_state.clear()
+                await self._speak_confirmation("Context cleared. Fresh start.")
+                return
 
-            # Add user turn to session
-            self._session.add_turn("user", transcript)
+            # Add user turn to context
+            self._project_state.add_turn("user", transcript)
 
             tts = self._ensure_tts()
-            messages = self._session.build_messages()
-            await self._process_claude_response(tts, messages)
+            system_prompt, messages = self._composer.compose()
+            await self._process_claude_response(tts, messages, system_prompt)
 
         except Exception as e:
             logger.error(f"Error processing recording: {e}", exc_info=True)
@@ -284,11 +299,12 @@ class AggieDaemon:
         self,
         tts: "TextToSpeech",
         messages: list[dict],
+        system_prompt: Optional[str] = None,
     ) -> None:
         """Stream response from Claude through TTS."""
         llm = self._ensure_llm()
         try:
-            await self._stream_response(llm, tts, messages)
+            await self._stream_response(llm, tts, messages, system_prompt)
         except APIError as e:
             logger.error(f"Claude API failed: {e}")
             await self._speak_error("Sorry, I'm running into issues with Claude.")
@@ -298,6 +314,7 @@ class AggieDaemon:
         llm: ClaudeClient,
         tts: "TextToSpeech",
         messages: list[dict],
+        system_prompt: Optional[str] = None,
     ) -> None:
         """Stream LLM response through TTS and playback.
 
@@ -308,13 +325,14 @@ class AggieDaemon:
             llm: Claude client.
             tts: TTS engine.
             messages: Conversation messages to send to Claude.
+            system_prompt: Optional system prompt override.
         """
         # Accumulate full response for session context
         full_response: list[str] = []
 
         async def sentence_generator():
             """Generate sentences from Claude stream, accumulating full response."""
-            token_stream = llm.stream_response(messages)
+            token_stream = llm.stream_response(messages, system_prompt=system_prompt)
             async for sentence in sentences_from_stream(token_stream):
                 full_response.append(sentence)
                 yield sentence
@@ -339,11 +357,13 @@ class AggieDaemon:
         # Wait for playback to complete (or be interrupted)
         await self._playback_task
 
-        # Save full response to session context
+        # Save full response to context
         response_text = " ".join(full_response)
         if response_text.strip():
-            self._session.add_turn("assistant", response_text)
+            self._project_state.add_turn("assistant", response_text)
             logger.info(f"Claude response ({len(full_response)} sentences): '{response_text[:80]}...'")
+            # Fire-and-forget compression check
+            self._compressor.maybe_trigger_compression()
         else:
             logger.warning("Empty LLM response")
 
@@ -401,6 +421,27 @@ class AggieDaemon:
                 await self._state_machine.force_transition(State.IDLE)
         except Exception as e:
             logger.error(f"Failed to speak error message: {e}")
+            await self._state_machine.force_transition(State.IDLE)
+
+    def _is_clear_phrase(self, transcript: str) -> bool:
+        """Check if transcript matches a context-clear voice command."""
+        normalized = transcript.strip().lower().rstrip(".!?")
+        return normalized in self._clear_phrases
+
+    async def _speak_confirmation(self, message: str) -> None:
+        """Speak a short confirmation and return to IDLE."""
+        try:
+            await self._state_machine.transition(State.SPEAKING)
+            tts = self._ensure_tts()
+            audio_data, sample_rate = tts.synthesize(message)
+            if len(audio_data) > 0:
+                self._playback_task = asyncio.create_task(
+                    self._play_with_completion(audio_data, sample_rate)
+                )
+            else:
+                await self._state_machine.force_transition(State.IDLE)
+        except Exception as e:
+            logger.error(f"Failed to speak confirmation: {e}")
             await self._state_machine.force_transition(State.IDLE)
 
     async def _play_cue(self, cue_type: CueType) -> None:
