@@ -37,6 +37,7 @@ class TextToSpeech:
         self._use_cuda = use_cuda
         self._piper_path: Optional[str] = None
         self._model_path: Optional[Path] = None
+        self._voice = None  # Cached PiperVoice instance
 
     def _find_piper(self) -> str:
         """Find the piper executable."""
@@ -145,12 +146,20 @@ class TextToSpeech:
             logger.warning(f"piper-tts failed: {e}, trying CLI")
             return self._synthesize_with_cli(text)
 
+    def _ensure_voice(self):
+        """Load and cache the PiperVoice instance."""
+        if self._voice is None:
+            from piper import PiperVoice
+
+            model_path = self._get_model_path()
+            logger.info(f"Loading PiperVoice: {model_path}")
+            self._voice = PiperVoice.load(str(model_path), use_cuda=self._use_cuda)
+            logger.info(f"PiperVoice ready (sample_rate={self._voice.config.sample_rate}Hz)")
+        return self._voice
+
     def _synthesize_with_piper_tts(self, text: str) -> Tuple[np.ndarray, int]:
         """Synthesize using piper-tts Python package."""
-        from piper import PiperVoice
-
-        model_path = self._get_model_path()
-        voice = PiperVoice.load(str(model_path), use_cuda=self._use_cuda)
+        voice = self._ensure_voice()
 
         # Synthesize — returns AudioChunk objects with audio_int16_bytes
         audio_bytes = b""

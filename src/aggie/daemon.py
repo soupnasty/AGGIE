@@ -119,9 +119,16 @@ class AggieDaemon:
         # Background playback task for interrupt support
         self._playback_task: Optional[asyncio.Task] = None
 
+        # Debug STT state (avoid transcribing AGGIE's own speech)
+        self._debug_audio_buffer: list[np.ndarray] = []
+        self._idle_since: float = 0.0
+
     def _on_state_change(self, old_state: State, new_state: State, context) -> None:
         """Sync state changes to the logging module for context injection."""
         set_current_state(new_state)
+        if new_state == State.IDLE:
+            self._idle_since = time.time()
+            self._debug_audio_buffer.clear()
 
     def _audio_frame_callback(self, frame: np.ndarray) -> None:
         """Queue audio frames for processing in main thread."""
@@ -144,7 +151,7 @@ class AggieDaemon:
         return self._wakeword
 
     def _ensure_stt(self) -> SpeechToText:
-        """Ensure STT is initialized."""
+        """Ensure STT is initialized with model loaded."""
         if self._stt is None:
             self._stt = SpeechToText(
                 model_size=self._config.stt.model_size,
@@ -152,6 +159,7 @@ class AggieDaemon:
                 compute_type=self._config.stt.compute_type,
                 language=self._config.stt.language,
             )
+            self._stt._ensure_model()
         return self._stt
 
     def _ensure_llm(self) -> ClaudeClient:
@@ -166,13 +174,14 @@ class AggieDaemon:
         return self._llm
 
     def _ensure_tts(self) -> TextToSpeech:
-        """Ensure TTS is initialized."""
+        """Ensure TTS is initialized with voice model loaded."""
         if self._tts is None:
             self._tts = TextToSpeech(
                 voice_model=self._config.tts.voice_model,
                 speaking_rate=self._config.tts.speaking_rate,
                 use_cuda=self._config.tts.use_cuda,
             )
+            self._tts._ensure_voice()
         return self._tts
 
     async def _handle_command(self, command: Command):
@@ -469,8 +478,10 @@ class AggieDaemon:
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, self._shutdown_event.set)
 
-        # Initialize wake word detector early
+        # Preload models so first interaction isn't slow
         self._ensure_wakeword()
+        self._ensure_stt()
+        self._ensure_tts()
 
         # Set up direct audio callback for low-latency wake word detection
         self._audio_capture.set_frame_callback(self._audio_frame_callback)
@@ -482,9 +493,8 @@ class AggieDaemon:
         logger.info("AGGIE daemon ready - listening for wake word")
 
         import time as _time
-        last_log = _time.time()
         last_transcribe = _time.time()
-        debug_audio_buffer: list[np.ndarray] = []
+        self._idle_since = _time.time()
 
         try:
             while not self._shutdown_event.is_set():
@@ -496,21 +506,28 @@ class AggieDaemon:
                     frames_to_process.append(self._pending_frames.pop(0))
 
                 if state == State.IDLE and not self._muted:
+                    # Cooldown: skip debug STT for 3s after entering IDLE
+                    # to avoid transcribing AGGIE's own speech from speakers
+                    now = _time.time()
+                    idle_cooldown = (now - self._idle_since) < 3.0
+
                     # Process frames for wake word detection
                     for frame in frames_to_process:
                         detected, confidence = self._wakeword.process_frame(frame)
-                        debug_audio_buffer.append(frame.copy())
+
+                        if not idle_cooldown:
+                            self._debug_audio_buffer.append(frame.copy())
 
                         # Debug logging - periodically transcribe to show what's being said
                         now = _time.time()
                         if confidence > 0.1:
                             logger.info(f"[WAKEWORD] confidence={confidence:.3f} {'>>> DETECTED! <<<' if detected else ''}")
-                        elif now - last_transcribe >= 3.0 and len(debug_audio_buffer) > 0:
+                        elif not idle_cooldown and now - last_transcribe >= 3.0 and len(self._debug_audio_buffer) > 0:
                             # Transcribe last 3 seconds of audio to show what's being spoken
                             last_transcribe = now
                             try:
                                 stt = self._ensure_stt()
-                                audio = np.concatenate(debug_audio_buffer)
+                                audio = np.concatenate(self._debug_audio_buffer)
                                 transcript = stt.transcribe(audio, self._config.audio.sample_rate)
                                 if transcript.strip():
                                     logger.info(f"[DEBUG STT] Heard: \"{transcript.strip()}\"")
@@ -518,8 +535,7 @@ class AggieDaemon:
                                     logger.debug(f"[DEBUG STT] (silence or unintelligible)")
                             except Exception as e:
                                 logger.warning(f"[DEBUG STT] Transcription failed: {e}")
-                            debug_audio_buffer.clear()
-                            last_log = now
+                            self._debug_audio_buffer.clear()
 
                         if detected:
                             logger.info("Wake word detected! Starting to listen...")
