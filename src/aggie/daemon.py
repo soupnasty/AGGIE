@@ -421,7 +421,14 @@ class AggieDaemon:
                     )
             loop_messages.append({"role": "user", "content": tool_results})
 
-        logger.warning(f"Agent loop hit max turns ({max_agent_turns})")
+        # Max turns exhausted — make one final call WITHOUT tools
+        # so Claude can summarize what it accomplished
+        logger.warning(f"Agent loop hit max turns ({max_agent_turns}), requesting summary")
+        async with llm.create_stream(
+            loop_messages, system_prompt, tools=None, max_tokens=max_tokens
+        ) as stream:
+            async for text in stream.text_stream:
+                yield text
 
     async def _stream_response(
         self,

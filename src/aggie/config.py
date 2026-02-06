@@ -78,8 +78,8 @@ class ToolConfig:
     working_dir: str = "~"
     timeout: float = 30.0
     max_output_chars: int = 16000
-    max_agent_turns: int = 10
-    max_tokens: int = 4096
+    max_agent_turns: int = 50
+    max_tokens: int = 10000
     mcp_servers: list[MCPServerConfig] = field(default_factory=list)
 
 
