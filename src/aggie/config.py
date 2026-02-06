@@ -61,6 +61,16 @@ class TTSConfig:
 
 
 @dataclass
+class MCPServerConfig:
+    """Configuration for a single MCP server."""
+
+    name: str = ""
+    command: str = ""
+    args: list[str] = field(default_factory=list)
+    env: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
 class ToolConfig:
     """Tool access configuration."""
 
@@ -70,6 +80,7 @@ class ToolConfig:
     max_output_chars: int = 16000
     max_agent_turns: int = 10
     max_tokens: int = 4096
+    mcp_servers: list[MCPServerConfig] = field(default_factory=list)
 
 
 @dataclass
@@ -158,6 +169,15 @@ class Config:
 
         return cls()
 
+    @staticmethod
+    def _parse_tools(data: dict) -> ToolConfig:
+        """Parse tools config, handling nested mcp_servers list."""
+        data = dict(data)  # shallow copy
+        mcp_raw = data.pop("mcp_servers", [])
+        config = ToolConfig(**data)
+        config.mcp_servers = [MCPServerConfig(**s) for s in mcp_raw]
+        return config
+
     @classmethod
     def _from_dict(cls, data: dict) -> "Config":
         """Create config from dictionary."""
@@ -167,7 +187,7 @@ class Config:
             stt=STTConfig(**data.get("stt", {})),
             llm=LLMConfig(**data.get("llm", {})),
             tts=TTSConfig(**data.get("tts", {})),
-            tools=ToolConfig(**data.get("tools", {})),
+            tools=cls._parse_tools(data.get("tools", {})),
             ipc=IPCConfig(**data.get("ipc", {})),
             logging=LoggingConfig(**data.get("logging", {})),
             context=ContextConfig(**data.get("context", {})),

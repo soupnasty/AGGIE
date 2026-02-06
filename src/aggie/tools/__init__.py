@@ -1,4 +1,4 @@
-"""Tool access for AGGIE — shell-first, MCP-later."""
+"""Tool access for AGGIE — bash and MCP servers."""
 
 from .bash import BASH_TOOL, check_command, execute_bash
 from .registry import ToolRegistry

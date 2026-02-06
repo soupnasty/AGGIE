@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from aggie.tools.bash import BASH_TOOL, check_command, execute_bash
+from aggie.tools.mcp_manager import MCPManager
 from aggie.tools.registry import ToolRegistry
 
 
@@ -178,3 +179,95 @@ class TestBashToolDefinition:
         assert schema["type"] == "object"
         assert "command" in schema["properties"]
         assert "command" in schema["required"]
+
+
+# --- ToolRegistry with MCP ---
+
+
+class TestToolRegistryWithMCP:
+    """Tests for ToolRegistry with MCP tools."""
+
+    def test_get_tools_includes_mcp(self):
+        mock_mcp = MagicMock()
+        mock_mcp.get_tools.return_value = [
+            {"name": "read_file", "description": "Read a file", "input_schema": {}}
+        ]
+        registry = ToolRegistry(mcp_manager=mock_mcp)
+        tools = registry.get_tools()
+        assert len(tools) == 2
+        names = {t["name"] for t in tools}
+        assert "bash" in names
+        assert "read_file" in names
+
+    @pytest.mark.asyncio
+    async def test_execute_routes_to_mcp(self, tmp_path):
+        mock_mcp = MagicMock()
+        mock_mcp.has_tool.return_value = True
+        mock_mcp.execute = AsyncMock(return_value="file contents here")
+        registry = ToolRegistry(working_dir=str(tmp_path), mcp_manager=mock_mcp)
+        result = await registry.execute("read_file", {"path": "/tmp/test.txt"})
+        assert result == "file contents here"
+        mock_mcp.execute.assert_called_once_with("read_file", {"path": "/tmp/test.txt"})
+
+    @pytest.mark.asyncio
+    async def test_bash_still_works_with_mcp(self, tmp_path):
+        mock_mcp = MagicMock()
+        mock_mcp.has_tool.return_value = False
+        registry = ToolRegistry(working_dir=str(tmp_path), mcp_manager=mock_mcp)
+        result = await registry.execute("bash", {"command": "echo hello"})
+        assert result == "hello"
+
+    @pytest.mark.asyncio
+    async def test_unknown_tool_with_mcp(self, tmp_path):
+        mock_mcp = MagicMock()
+        mock_mcp.has_tool.return_value = False
+        registry = ToolRegistry(working_dir=str(tmp_path), mcp_manager=mock_mcp)
+        result = await registry.execute("nonexistent", {"foo": "bar"})
+        assert "Unknown tool" in result
+
+    @pytest.mark.asyncio
+    async def test_mcp_output_truncation(self, tmp_path):
+        mock_mcp = MagicMock()
+        mock_mcp.has_tool.return_value = True
+        mock_mcp.execute = AsyncMock(return_value="x" * 20000)
+        registry = ToolRegistry(
+            working_dir=str(tmp_path), max_output_chars=200, mcp_manager=mock_mcp
+        )
+        result = await registry.execute("read_file", {"path": "/tmp/big.txt"})
+        assert "truncated" in result
+        assert len(result) < 500
+
+
+# --- MCPManager ---
+
+
+class TestMCPManager:
+    """Tests for MCPManager result conversion."""
+
+    def test_result_to_string_text(self):
+        mock_result = MagicMock()
+        mock_content = MagicMock()
+        mock_content.text = "hello world"
+        mock_result.content = [mock_content]
+        assert MCPManager._result_to_string(mock_result) == "hello world"
+
+    def test_result_to_string_multiple(self):
+        mock_result = MagicMock()
+        c1 = MagicMock()
+        c1.text = "line one"
+        c2 = MagicMock()
+        c2.text = "line two"
+        mock_result.content = [c1, c2]
+        assert MCPManager._result_to_string(mock_result) == "line one\nline two"
+
+    def test_result_to_string_empty(self):
+        mock_result = MagicMock()
+        mock_result.content = []
+        assert MCPManager._result_to_string(mock_result) == "(no output)"
+
+    def test_result_to_string_non_text(self):
+        mock_result = MagicMock()
+        mock_content = MagicMock(spec=[])  # no text attr
+        mock_content.type = "image"
+        mock_result.content = [mock_content]
+        assert "[image content]" in MCPManager._result_to_string(mock_result)

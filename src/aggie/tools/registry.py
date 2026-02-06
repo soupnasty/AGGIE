@@ -3,9 +3,12 @@
 import datetime
 import logging
 import time
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from .bash import BASH_TOOL, check_command, execute_bash
+
+if TYPE_CHECKING:
+    from .mcp_manager import MCPManager
 
 logger = logging.getLogger(__name__)
 
@@ -13,8 +16,8 @@ logger = logging.getLogger(__name__)
 class ToolRegistry:
     """Manages available tools and routes execution.
 
-    Currently supports only the bash tool. Designed to support
-    MCP servers in the future as usage patterns emerge.
+    Supports the bash tool and optional MCP servers. MCP tools are
+    discovered at startup and merged with bash for Claude's tool list.
     """
 
     def __init__(
@@ -22,15 +25,20 @@ class ToolRegistry:
         working_dir: str = "~",
         timeout: float = 30.0,
         max_output_chars: int = 16000,
+        mcp_manager: Optional["MCPManager"] = None,
     ) -> None:
         self._working_dir = working_dir
         self._timeout = timeout
         self._max_output_chars = max_output_chars
         self._tool_log: list[dict] = []
+        self._mcp_manager = mcp_manager
 
     def get_tools(self) -> list[dict]:
         """Return tool definitions for the Claude API."""
-        return [BASH_TOOL]
+        tools = [BASH_TOOL]
+        if self._mcp_manager:
+            tools.extend(self._mcp_manager.get_tools())
+        return tools
 
     async def execute(self, tool_name: str, tool_input: dict) -> str:
         """Execute a tool call with safety checks and logging.
@@ -42,9 +50,13 @@ class ToolRegistry:
         Returns:
             Tool output as a string.
         """
+        # Route MCP tools
         if tool_name != "bash":
+            if self._mcp_manager and self._mcp_manager.has_tool(tool_name):
+                return await self._execute_mcp(tool_name, tool_input)
             return f"Unknown tool: {tool_name}"
 
+        # Bash tool
         command = tool_input.get("command", "")
         if not command:
             return "ERROR: No command provided."
@@ -73,6 +85,29 @@ class ToolRegistry:
             f"{len(output)} chars, policy={policy})"
         )
         self._log_call(command, output, duration_ms, policy)
+
+        return output
+
+    async def _execute_mcp(self, tool_name: str, tool_input: dict) -> str:
+        """Execute an MCP tool call with truncation and logging."""
+        start = time.monotonic()
+        output = await self._mcp_manager.execute(tool_name, tool_input)
+        duration_ms = int((time.monotonic() - start) * 1000)
+
+        # Truncate if needed
+        if len(output) > self._max_output_chars:
+            half = self._max_output_chars // 2
+            output = (
+                output[:half]
+                + "\n\n[... truncated ...]\n\n"
+                + output[-half:]
+            )
+
+        logger.info(
+            f"MCP tool call: {tool_name} ({duration_ms}ms, "
+            f"{len(output)} chars)"
+        )
+        self._log_call(f"mcp:{tool_name}", output, duration_ms, "allow")
 
         return output
 

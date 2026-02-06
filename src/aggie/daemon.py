@@ -86,13 +86,19 @@ class AggieDaemon:
             self._audio_cues = AudioCues()
             logger.info("Audio cues enabled")
 
-        # Tool registry
+        # Tool registry + MCP manager
         self._tool_registry: Optional[ToolRegistry] = None
+        self._mcp_manager = None
         if config.tools.enabled:
+            if config.tools.mcp_servers:
+                from .tools.mcp_manager import MCPManager
+                self._mcp_manager = MCPManager()
+
             self._tool_registry = ToolRegistry(
                 working_dir=os.path.expanduser(config.tools.working_dir),
                 timeout=config.tools.timeout,
                 max_output_chars=config.tools.max_output_chars,
+                mcp_manager=self._mcp_manager,
             )
 
         # Three-tier context management
@@ -330,11 +336,11 @@ class AggieDaemon:
             await self._speak_error("Sorry, I'm running into issues with Claude.")
 
     TOOL_SYSTEM_PROMPT_ADDITION = (
-        "\n\nYou have access to a bash tool for running commands on the local machine. "
-        "Use it when the user asks you to do something that requires local access "
-        "(reading files, running code, git operations, etc.). "
-        "Be resourceful — if your first command doesn't find what you need, try alternatives "
-        "(e.g. find, locate, grep) before giving up. Solve the problem, don't ask for clarification "
+        "\n\nYou have access to tools for interacting with the local machine. "
+        "Use them when the user asks you to do something that requires local access "
+        "(reading files, writing files, running code, git operations, etc.). "
+        "Be resourceful — if your first approach doesn't work, try alternatives "
+        "before giving up. Solve the problem, don't ask for clarification "
         "unless you've exhausted reasonable approaches. "
         "Keep spoken responses concise — summarize tool output rather than reading it verbatim."
     )
@@ -606,6 +612,14 @@ class AggieDaemon:
         await self._ipc_server.start()
         await self._audio_capture.start()
 
+        # Start MCP servers if configured
+        if self._mcp_manager and self._config.tools.mcp_servers:
+            try:
+                await self._mcp_manager.start(self._config.tools.mcp_servers)
+            except Exception as e:
+                logger.warning(f"MCP manager failed to start: {e}")
+                self._mcp_manager = None
+
         logger.info("AGGIE daemon ready - listening for wake word")
 
         import time as _time
@@ -723,6 +737,8 @@ class AggieDaemon:
         finally:
             # Cleanup
             logger.info("Shutting down AGGIE daemon")
+            if self._mcp_manager:
+                await self._mcp_manager.shutdown()
             await self._audio_capture.stop()
             await self._ipc_server.stop()
             logger.info("AGGIE daemon stopped")
